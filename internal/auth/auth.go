@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/DDCcheng/pet/internal/deck"
@@ -26,6 +27,8 @@ type loginResp struct {
 type Server struct {
 	DB     *sql.DB
 	Tokens map[string]string //token->playerid
+	Conns  map[string]*WsClient
+	mu     sync.RWMutex
 }
 
 type saveDeckReq struct {

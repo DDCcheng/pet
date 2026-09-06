@@ -13,10 +13,12 @@ func main() {
 	s := &auth.Server{
 		DB:     db,
 		Tokens: map[string]string{},
+		Conns:  map[string]*auth.WsClient{},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/login", s.Login)
 	mux.HandleFunc("/decks", s.Savedecks)
+	mux.HandleFunc("/ws", s.ServerWs)
 	log.Println("listen:8080")
 	log.Fatal(http.ListenAndServe(":8080", mux))
 }
