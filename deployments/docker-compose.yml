@@ -6,3 +6,7 @@ services:
       MYSQL_DATABASE: pet
     ports:
       - "3307:3306"
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
