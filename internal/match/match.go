@@ -69,21 +69,6 @@ func (m *Manager) take(ctx context.Context, playerId string) (bool, error) {
 	return true, nil
 }
 
-func (m *Manager) Run(ctx context.Context) {
-	t := time.NewTicker(m.Tick)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			if err := m.matchOnce(ctx); err != nil {
-				log.Println("Match:", err)
-			}
-		}
-	}
-}
-
 func (m *Manager) matchOnce(ctx context.Context) error {
 	now := float64(time.Now().UnixMilli())
 	paired := map[string]bool{}
@@ -91,6 +76,7 @@ func (m *Manager) matchOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	//迭代取出map对象
 	for _, z := range zs {
 		a := z.Member.(string)
 		if paired[a] {
@@ -119,6 +105,7 @@ func (m *Manager) matchOnce(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+
 		b := ""
 		for _, tem := range ids {
 			if tem != a && !paired[tem] {
@@ -129,7 +116,6 @@ func (m *Manager) matchOnce(ctx context.Context) error {
 		if b == "" {
 			continue
 		}
-
 		oka, err := m.take(ctx, a)
 		if err != nil {
 			return err
@@ -150,4 +136,19 @@ func (m *Manager) matchOnce(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (m *Manager) Run(ctx context.Context) {
+	t := time.NewTicker(m.Tick)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if err := m.matchOnce(ctx); err != nil {
+				log.Println("Match:", err)
+			}
+		}
+	}
 }

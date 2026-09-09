@@ -74,7 +74,9 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token := fmt.Sprintf("%s-%d", req.Username, time.Now().UnixNano())
+	s.mu.Lock()
 	s.Tokens[token] = req.Username
+	s.mu.Unlock()
 	writeJSON(w, http.StatusOK, loginResp{Token: token, PlayerId: req.Username})
 }
 
@@ -85,7 +87,9 @@ func (s *Server) PlayerFromToken(r *http.Request) (string, error) {
 		return "", fmt.Errorf("missing token")
 	}
 	token := strings.TrimPrefix(h, prefix)
+	s.mu.RLock()
 	username, ok := s.Tokens[token]
+	s.mu.RUnlock()
 	if !ok {
 		return "", fmt.Errorf("invalid token")
 	}

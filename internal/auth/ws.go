@@ -1,9 +1,11 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -30,6 +32,7 @@ type wsMsg struct {
 
 // 包装一下conn，都写都在这里进行
 type WsClient struct {
+	srv  *Server
 	conn *websocket.Conn
 	send chan []byte
 	quit chan struct{}
@@ -61,41 +64,18 @@ func (s *Server) addConn(user string, c *WsClient) {
 	}
 }
 
-func (s *Server) removeConn(user string, c *WsClient) {
+func (s *Server) removeConn(user string, c *WsClient) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if cur, ok := s.Conns[user]; ok && cur == c {
 		delete(s.Conns, user)
+		return true
 	}
+	return false
 }
 
-func (s *Server) ServerWs(w http.ResponseWriter, r *http.Request) {
-	token := r.URL.Query().Get("token")
-	s.mu.Lock()
-	username, ok := s.Tokens[token]
-	s.mu.Unlock()
-	if !ok || token == "" {
-		http.Error(w, "invalid token", http.StatusUnauthorized)
-		return
-	}
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Println("upgrade:", err)
-		return
-	}
-	c := &WsClient{
-		conn: conn,
-		send: make(chan []byte, 256),
-		quit: make(chan struct{}),
-	}
-	s.addConn(username, c)
-	go c.writeLoop()
-	welcome, _ := json.Marshal(wsMsg{Type: "welcome", Payload: username})
-	c.Send(welcome)
-	c.readLoop(username)
-	s.removeConn(username, c)
-	c.close()
-}
+// transfer to json format
+func mustJSON(v any) []byte { b, _ := json.Marshal(v); return b }
 
 func (c *WsClient) readLoop(username string) {
 	c.conn.SetReadLimit(maxMsgSize)
@@ -111,8 +91,32 @@ func (c *WsClient) readLoop(username string) {
 		}
 		c.conn.SetReadDeadline(time.Now().Add(pongWait))
 
-		log.Printf("%s says %s", username, data)
-		c.Send(data)
+		var m wsMsg
+		if err := json.Unmarshal(data, &m); err != nil {
+			c.Send(mustJSON(wsMsg{Type: "error", Payload: "bad json"}))
+			continue
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		switch m.Type {
+		case "enqueue":
+			score := 1500.0
+			if v, err := strconv.ParseFloat(m.Payload, 64); err == nil {
+				score = v // 测试时可以带分数：{"type":"enqueue","payload":"1800"}
+			}
+			if err := c.srv.MM.Join(ctx, username, score); err != nil {
+				log.Println("join:", err)
+				c.Send(mustJSON(wsMsg{Type: "error", Payload: "enqueue failed"}))
+			} else {
+				c.Send(mustJSON(wsMsg{Type: "queued", Payload: username}))
+			}
+		case "dequeue":
+			_ = c.srv.MM.Leave(ctx, username)
+			c.Send(mustJSON(wsMsg{Type: "dequeued"}))
+		default:
+			log.Printf("%s says %s", username, data)
+		}
+		cancel()
 	}
 }
 
@@ -144,4 +148,39 @@ func (c *WsClient) writeLoop() {
 		}
 	}
 
+}
+
+func (s *Server) ServerWs(w http.ResponseWriter, r *http.Request) {
+	token := r.URL.Query().Get("token")
+	s.mu.RLock()
+	username, ok := s.Tokens[token]
+	s.mu.RUnlock()
+	if !ok || token == "" {
+		http.Error(w, "invalid token", http.StatusUnauthorized)
+		return
+	}
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Println("upgrade:", err)
+		return
+	}
+	c := &WsClient{
+		srv:  s,
+		conn: conn,
+		send: make(chan []byte, 256),
+		quit: make(chan struct{}),
+	}
+	s.addConn(username, c)
+	go c.writeLoop()
+	welcome, _ := json.Marshal(wsMsg{Type: "welcome", Payload: username})
+	c.Send(welcome)
+	c.readLoop(username)
+	if s.removeConn(username, c) {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		if s.MM != nil {
+			_ = s.MM.Leave(ctx, username)
+		}
+		cancel()
+	}
+	c.close()
 }
