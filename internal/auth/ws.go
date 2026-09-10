@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/DDCcheng/pet/internal/room"
 	"github.com/gorilla/websocket"
 )
 
@@ -26,17 +27,19 @@ const (
 )
 
 type wsMsg struct {
-	Type    string `json:"type"`
-	Payload string `json:"payload,omitempty"`
+	Type    string          `json:"type"`
+	Payload string          `json:"payload,omitempty"`
+	Data    json.RawMessage `json:data,omitempty`
 }
 
 // 包装一下conn，都写都在这里进行
 type WsClient struct {
-	srv  *Server
-	conn *websocket.Conn
-	send chan []byte
-	quit chan struct{}
-	once sync.Once
+	srv    *Server
+	conn   *websocket.Conn
+	send   chan []byte
+	quit   chan struct{}
+	once   sync.Once
+	roomId string
 }
 
 func (c *WsClient) close() {
@@ -97,9 +100,9 @@ func (c *WsClient) readLoop(username string) {
 			continue
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		switch m.Type {
 		case "enqueue":
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			score := 1500.0
 			if v, err := strconv.ParseFloat(m.Payload, 64); err == nil {
 				score = v // 测试时可以带分数：{"type":"enqueue","payload":"1800"}
@@ -110,13 +113,29 @@ func (c *WsClient) readLoop(username string) {
 			} else {
 				c.Send(mustJSON(wsMsg{Type: "queued", Payload: username}))
 			}
+			cancel()
+		case "join", "play_card", "end_turn":
+			var p struct {
+				RoomID string `json:"room_id"`
+			}
+			_ = json.Unmarshal(m.Data, &p)
+
+			r, ok := c.srv.RoomMgr.Get(p.RoomID)
+			if !ok {
+				c.Send(mustJSON(wsMsg{Type: "error", Payload: "room not found"}))
+				break
+			}
+			c.roomId = p.RoomID // 记下来，断线时要用
+			r.Send(room.Cmd{PlayerId: username, Type: m.Type, Data: m.Data})
 		case "dequeue":
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			_ = c.srv.MM.Leave(ctx, username)
 			c.Send(mustJSON(wsMsg{Type: "dequeued"}))
+			cancel()
 		default:
-			log.Printf("%s says %s", username, data)
+			c.Send(mustJSON(wsMsg{Type: "error", Payload: "unknown type: " + m.Type}))
 		}
-		cancel()
+
 	}
 }
 
@@ -181,6 +200,11 @@ func (s *Server) ServerWs(w http.ResponseWriter, r *http.Request) {
 			_ = s.MM.Leave(ctx, username)
 		}
 		cancel()
+		if c.roomId != "" {
+			if r, ok := s.RoomMgr.Get(c.roomId); ok {
+				r.Send(room.Cmd{PlayerId: username, Type: "leave"})
+			}
+		}
 	}
 	c.close()
 }

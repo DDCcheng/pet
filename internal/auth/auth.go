@@ -11,6 +11,7 @@ import (
 
 	"github.com/DDCcheng/pet/internal/deck"
 	"github.com/DDCcheng/pet/internal/match"
+	"github.com/DDCcheng/pet/internal/room"
 	"github.com/DDCcheng/pet/internal/store"
 )
 
@@ -26,11 +27,12 @@ type loginResp struct {
 }
 
 type Server struct {
-	DB     *sql.DB
-	Tokens map[string]string    //token->playerid
-	Conns  map[string]*WsClient //playerId->websocket
-	mu     sync.RWMutex
-	MM     *match.Manager
+	DB      *sql.DB
+	Tokens  map[string]string    //token->playerid
+	Conns   map[string]*WsClient //playerId->websocket
+	mu      sync.RWMutex
+	MM      *match.Manager
+	RoomMgr *room.Manager
 }
 
 type saveDeckReq struct {
@@ -157,13 +159,15 @@ func (s *Server) NotifyMatch(a, b, roomId string) {
 	msg, _ := json.Marshal(map[string]string{
 		"type": "match_found", "room_id": roomId,
 	})
+	s.SendTo(a, msg)
+	s.SendTo(b, msg)
+}
+
+func (s *Server) SendTo(playerId string, payload []byte) {
 	s.mu.RLock()
-	ca, cb := s.Conns[a], s.Conns[b]
+	c := s.Conns[playerId]
 	s.mu.RUnlock()
-	if ca != nil {
-		ca.Send(msg)
-	}
-	if cb != nil {
-		cb.Send(msg)
+	if c != nil {
+		c.Send(payload)
 	}
 }
