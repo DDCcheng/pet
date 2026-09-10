@@ -103,7 +103,6 @@ func (s *Server) Savedecks(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, loginResp{Error: "method not allowed"})
 		return
 	}
-
 	username, err := s.PlayerFromToken(r)
 	if err != nil {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -116,7 +115,6 @@ func (s *Server) Savedecks(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, loginResp{Error: "bad json"})
 		return
 	}
-
 	cat := deck.Catalog()
 	cards := make([]deck.Card, 0, len(req.Cards))
 	for _, id := range req.Cards {
