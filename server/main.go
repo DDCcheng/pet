@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/DDCcheng/pet/internal/auth"
+	"github.com/DDCcheng/pet/internal/deck"
 	"github.com/DDCcheng/pet/internal/match"
 	"github.com/DDCcheng/pet/internal/room"
 	"github.com/DDCcheng/pet/internal/store"
@@ -24,6 +25,7 @@ const (
 	redisAddr = "127.0.0.1:6379"
 	mysqlDSN  = "root:pet@tcp(127.0.0.1:3307)/pet?parseTime=true&charset=utf8mb4"
 )
+const cardPath = "configs/cards.yaml"
 
 func openMysql() (*sql.DB, error) {
 	db, err := store.Open(mysqlDSN)
@@ -40,6 +42,7 @@ func openRedis(ctx context.Context) (*redis.Client, error) {
 	}
 	return rdb, nil
 }
+
 func newMatcher(rdb *redis.Client) *match.Manager {
 	return &match.Manager{
 		RDB:         rdb,
@@ -73,9 +76,15 @@ func run() error {
 		return err
 	}
 	defer rdb.Close()
+	cat, err := deck.Load(cardPath)
+	if err != nil {
+		return err
+	}
+	log.Printf("卡表加载完成 %d张", cat.Len())
 	//objects in different packages
 	s := &auth.Server{
 		DB:     db,
+		Cat:    cat,
 		Tokens: map[string]string{},
 		Conns:  map[string]*auth.WsClient{},
 	}
@@ -83,8 +92,8 @@ func run() error {
 	rooms := room.NewManager()
 	s.MM = mm
 	s.RoomMgr = rooms
-	if s.MM == nil || s.RoomMgr == nil {
-		return errors.New("MM / RoomMgr 未接线")
+	if s.MM == nil || s.RoomMgr == nil || s.Cat == nil {
+		return errors.New("MM / RoomMgr/Cat 未接线")
 	}
 	mm.OnMatch = func(p match.Pair) {
 		rooms.Create(ctx, p.RoomID, p.A, p.B, s.SendTo)

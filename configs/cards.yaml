@@ -1,0 +1,41 @@
+# 卡表。改数值只动这个文件，不用重新编译。
+cards:
+  - id: slime
+    name: 史莱姆
+    type: minion
+    cost: 1
+    atk: 1
+    hp: 2
+
+  - id: wolf
+    name: 幼狼
+    type: minion
+    cost: 2
+    atk: 2
+    hp: 2
+
+  - id: knight
+    name: 骑士
+    type: minion
+    cost: 3
+    atk: 3
+    hp: 4
+
+  - id: dragon
+    name: 幼龙
+    type: minion
+    cost: 5
+    atk: 5
+    hp: 6
+
+  - id: bolt
+    name: 雷击
+    type: spell
+    cost: 1
+    damage: 3
+
+  - id: heal
+    name: 治疗
+    type: spell
+    cost: 2
+    heal: 3

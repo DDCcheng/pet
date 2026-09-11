@@ -37,3 +37,9 @@ func (m *Manager) Remove(id string) {
 		r.Close()
 	}
 }
+
+func (m *Manager) Len() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.rooms)
+}

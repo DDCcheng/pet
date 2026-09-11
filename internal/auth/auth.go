@@ -33,6 +33,7 @@ type Server struct {
 	mu      sync.RWMutex
 	MM      *match.Manager
 	RoomMgr *room.Manager
+	Cat     *deck.Catalog
 }
 
 type saveDeckReq struct {
@@ -99,7 +100,6 @@ func (s *Server) PlayerFromToken(r *http.Request) (string, error) {
 }
 
 func (s *Server) Savedecks(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
 	//valid method
 	if r.Method != http.MethodPost && r.Method != http.MethodPut {
 		writeJSON(w, http.StatusMethodNotAllowed, loginResp{Error: "method not allowed"})
@@ -107,8 +107,7 @@ func (s *Server) Savedecks(w http.ResponseWriter, r *http.Request) {
 	}
 	username, err := s.PlayerFromToken(r)
 	if err != nil {
-		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(loginResp{Error: err.Error()})
+		writeJSON(w, http.StatusBadRequest, loginResp{Error: err.Error()})
 		return
 	}
 	//valid body
@@ -117,39 +116,24 @@ func (s *Server) Savedecks(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, loginResp{Error: "bad json"})
 		return
 	}
-	cat := deck.Catalog()
-	cards := make([]deck.Card, 0, len(req.Cards))
-	for _, id := range req.Cards {
-		c, ok := cat[id]
-		if !ok {
-			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(loginResp{Error: "unknown card" + id})
-			return
-		}
-		cards = append(cards, c)
-	}
-
-	d := deck.Deck{Owner: username, Cards: cards}
-	if err := deck.ValidateDeck(d); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(loginResp{Error: err.Error()})
+	d := deck.Deck{Owner: username, Cards: req.Cards}
+	if err := deck.ValidateDeck(s.Cat, d); err != nil {
+		writeJSON(w, http.StatusBadRequest, loginResp{Error: err.Error()})
 		return
 	}
 
 	userId, _, err := store.FindUserByName(s.DB, username)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(loginResp{Error: "user not found"})
+		writeJSON(w, http.StatusBadRequest, loginResp{Error: "user not found"})
 		return
 	}
 	raw, _ := json.Marshal(req.Cards)
 	err = store.UpsertDeck(s.DB, userId, string(raw))
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(loginResp{Error: "db error"})
+		writeJSON(w, http.StatusBadRequest, loginResp{Error: "db error"})
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]string{
+	writeJSON(w, http.StatusOK, map[string]string{
 		"ok":    "true",
 		"owner": username,
 	})

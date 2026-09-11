@@ -29,7 +29,7 @@ const (
 type wsMsg struct {
 	Type    string          `json:"type"`
 	Payload string          `json:"payload,omitempty"`
-	Data    json.RawMessage `json:data,omitempty`
+	Data    json.RawMessage `json:"data,omitempty"`
 }
 
 // 包装一下conn，都写都在这里进行
