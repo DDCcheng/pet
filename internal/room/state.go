@@ -2,7 +2,8 @@ package room
 
 import "encoding/json"
 
-type state struct {
+//存储的是会话状态，两名玩家，是否都加入游戏，是否在线，这一个对局session是否over
+type session struct {
 	players [2]string
 	joined  map[string]bool
 	online  map[string]bool
@@ -13,8 +14,8 @@ func (r *Room) status(s string) {
 	r.broadcast(map[string]string{"type": "state", "status": s, "room_id": r.Id})
 }
 
-func newState(players [2]string) *state {
-	return &state{
+func newSession(players [2]string) *session {
+	return &session{
 		players: players,
 		joined:  map[string]bool{},
 		online:  map[string]bool{},
@@ -30,6 +31,8 @@ func (r *Room) broadcast(v any) {
 		r.Out(p, b)
 	}
 }
+
+//统计用户在线数量
 func countTrue(m map[string]bool) int {
 	n := 0
 	for _, v := range m {
@@ -39,6 +42,6 @@ func countTrue(m map[string]bool) int {
 	}
 	return n
 }
-func (st *state) has(id string) bool {
+func (st *session) has(id string) bool {
 	return id == st.players[0] || id == st.players[1]
 }

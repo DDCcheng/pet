@@ -48,7 +48,7 @@ func (r *Room) Send(c Cmd) bool {
 	}
 }
 
-func (r *Room) handle(st *state, cmd Cmd, startGrace, cancelGrace func()) bool {
+func (r *Room) handle(st *session, cmd Cmd, startGrace, cancelGrace func()) bool {
 	if !st.has(cmd.PlayerId) {
 		log.Printf("room %s: %s 不属于本房间，忽略", r.Id, cmd.PlayerId)
 		return false
@@ -81,7 +81,7 @@ func (r *Room) handle(st *state, cmd Cmd, startGrace, cancelGrace func()) bool {
 }
 
 func (r *Room) Run(ctx context.Context) {
-	state := newState(r.Players)
+	state := newSession(r.Players)
 	grace := r.Grace
 	if grace <= 0 {
 		grace = emptyGrace

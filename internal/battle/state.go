@@ -45,6 +45,7 @@ func NewState(rooId string, cat *deck.Catalog, a, b PlayerInit, seed int64) *Sta
 		st.Draw(0)
 		st.Draw(1)
 	}
+	st.beginTurn(0)
 	return st
 }
 
@@ -72,7 +73,7 @@ func (s *State) newInstID() string {
 
 // Summon 把一张随从卡变成场上的一只。Day 9 的 Apply 会调它。
 func (s *State) Summon(playerIdx int, cardID string) (Minion, error) {
-	// TODO ③：查卡表 → 校验是 minion → 校验场上没满 → 拷贝属性建实例
+	// 查卡表 → 校验是 minion → 校验场上没满 → 拷贝属性建实例
 	card, ok := s.cat.Get(cardID)
 	if !ok {
 		return Minion{}, fmt.Errorf("unknown card %s", cardID)
@@ -94,4 +95,35 @@ func (s *State) Summon(playerIdx int, cardID string) (Minion, error) {
 	}
 	p.Board = append(p.Board, m)
 	return m, nil
+}
+
+func indexOfString(xs []string, x string) int {
+	for i, v := range xs {
+		if v == x {
+			return i
+		}
+	}
+	return -1
+}
+
+func (s *State) beginTurn(i int) {
+	p := s.Players[i]
+	if p.MaxMana < MaxMana {
+		p.MaxMana++
+	}
+	p.Mana = p.MaxMana
+	s.Draw(i)
+	for k := range p.Board {
+		p.Board[k].CanAttack = true
+	}
+}
+
+// 判断用户是否属于这局游戏
+func (s *State) indexOf(playerId string) int {
+	for i, p := range s.Players {
+		if p.ID == playerId {
+			return i
+		}
+	}
+	return -1
 }
