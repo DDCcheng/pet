@@ -12,7 +12,7 @@ const (
 	CodeBoardFull      Code = "board_full"
 	CodeUnknownAction  Code = "unknown_action"
 	CodeUnknownCard    Code = "unknown_card"
-	CodeNotImplemented Code = "card_notImplemented"
+	CodeNotImplemented Code = "not_implemented"
 	CodeNotInGame      Code = "not_in_game"
 )
 

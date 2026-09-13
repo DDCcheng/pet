@@ -1,7 +1,5 @@
 package battle
 
-import "github.com/DDCcheng/pet/internal/deck"
-
 func (s *State) Apply(playerId string, a Action) error {
 	if s.Over {
 		return fail(CodeGameOver, "对局已结束")
@@ -33,15 +31,10 @@ func (s *State) playCard(i int, a Action) error {
 	if !ok {
 		return fail(CodeUnknownCard, "卡表里没有 %s", a.CardID)
 	}
-	if card.Type != deck.TypeMinion {
-		return fail(CodeNotImplemented, "法术 %s 暂未实现", a.CardID)
-	}
 	if p.Mana < card.Cost {
 		return fail(CodeNotEnoughMana, "需要 %d 费，当前 %d", card.Cost, p.Mana)
 	}
-	if len(p.Board) >= BoardLimit {
-		return fail(CodeBoardFull, "场上已满（上限 %d）", BoardLimit)
-	}
+
 	if _, err := s.Summon(i, a.CardID); err != nil {
 		return err
 	}

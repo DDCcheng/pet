@@ -13,18 +13,25 @@ type PlayerInit struct {
 	Cards []string // CardID 列表，已经过 ValidateDeck
 }
 
-func NewState(rooId string, cat *deck.Catalog, a, b PlayerInit, seed int64) *State {
+func NewState(roomID string, cat *deck.Catalog, a, b PlayerInit, seed int64) (*State, error) {
 	if cat == nil {
-		panic("battle.NewState: catalog is nil")
+		return nil, fmt.Errorf("cat can not be nil")
 	}
+	if a.ID == "" || b.ID == "" {
+		return nil, fmt.Errorf("players id can not be nil")
+	}
+	if a.ID == b.ID {
+		return nil, fmt.Errorf("a.id is equal to b.id")
+	}
+
 	for _, init := range [2]PlayerInit{a, b} {
 		if len(init.Cards) <= HandStart {
-			panic(fmt.Sprintf("battle.NewState: 玩家 %s 卡组只有 %d 张，不够发 %d 张起手牌",
-				init.ID, len(init.Cards), HandStart))
+			return nil, fmt.Errorf("battle.NewState: 玩家 %s 卡组只有 %d 张，不够发 %d 张起手牌",
+				init.ID, len(init.Cards), HandStart)
 		}
 	}
 	st := &State{
-		RoomID: rooId,
+		RoomID: roomID,
 		Seed:   seed,
 		cat:    cat,
 		rng:    rand.New(rand.NewSource(seed)), // ★ 每局独立的随机源
@@ -46,7 +53,7 @@ func NewState(rooId string, cat *deck.Catalog, a, b PlayerInit, seed int64) *Sta
 		st.Draw(1)
 	}
 	st.beginTurn(0)
-	return st
+	return st, nil
 }
 
 func (s *State) shuffle(d []string) {
@@ -76,14 +83,14 @@ func (s *State) Summon(playerIdx int, cardID string) (Minion, error) {
 	// 查卡表 → 校验是 minion → 校验场上没满 → 拷贝属性建实例
 	card, ok := s.cat.Get(cardID)
 	if !ok {
-		return Minion{}, fmt.Errorf("unknown card %s", cardID)
+		return Minion{}, fail(CodeUnknownCard, "卡表里没有 %s", cardID)
 	}
 	if card.Type != deck.TypeMinion {
-		return Minion{}, fmt.Errorf("%s 不是随从", cardID)
+		return Minion{}, fail(CodeNotImplemented, "%s 不是随从", cardID)
 	}
 	p := s.Players[playerIdx]
 	if len(p.Board) >= BoardLimit {
-		return Minion{}, fmt.Errorf("场上已满（上限 %d）", BoardLimit)
+		return Minion{}, fail(CodeBoardFull, "场上已满（上限 %d）", BoardLimit)
 	}
 	m := Minion{
 		InstID:    s.newInstID(),
@@ -118,7 +125,7 @@ func (s *State) beginTurn(i int) {
 	}
 }
 
-// 判断用户是否属于这局游戏
+// 判断用户是否属于这局游戏,ID 唯一性由 NewState 保证，所以这里返回第一个匹配是安全的
 func (s *State) indexOf(playerId string) int {
 	for i, p := range s.Players {
 		if p.ID == playerId {
