@@ -42,7 +42,7 @@ func TestApply(t *testing.T) {
 		{
 			name:     "未知动作",
 			player:   "alice",
-			action:   Action{Type: "attack"},
+			action:   Action{Type: "fly"},
 			wantCode: CodeUnknownAction,
 		},
 		{
