@@ -114,7 +114,7 @@ func (c *WsClient) readLoop(username string) {
 				c.Send(mustJSON(wsMsg{Type: "queued", Payload: username}))
 			}
 			cancel()
-		case "join", "play_card", "end_turn":
+		case "join", "play_card", "end_turn", "attack":
 			var p struct {
 				RoomID string `json:"room_id"`
 			}

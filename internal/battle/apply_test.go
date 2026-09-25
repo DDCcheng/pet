@@ -179,7 +179,9 @@ func TestApply(t *testing.T) {
 
 // 回合来回切 + 费用封顶。多次 Apply，放不进上面的表里。
 func TestApplyEndTurnAlternatesAndCapsMana(t *testing.T) {
-	s := newTestState(t)
+	// ★ 用厚牌库：8 张牌库在第 ~20 手就抽空，疲劳会把人打死，end_turn 会被 game_over 拒绝。
+	//   这条测只关心换手和费用封顶，不该被疲劳规则干扰。
+	s := mustNewState(t, cat(t), PlayerInit{"alice", thickCards(40)}, PlayerInit{"bob", thickCards(40)}, 7)
 	for k := 0; k < 25; k++ {
 		cur := s.Players[s.Turn].ID
 		want := 1 - s.Turn

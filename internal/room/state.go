@@ -8,6 +8,7 @@ type session struct {
 	joined  map[string]bool
 	online  map[string]bool
 	over    bool
+	started bool
 }
 
 func (r *Room) status(s string) {

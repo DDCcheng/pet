@@ -113,11 +113,11 @@ func TestManagerRemovesClosedRoom(t *testing.T) {
 	s := newSink()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	r := m.Create(ctx, "r1", "alice", "bob", s.fn)
+	r := m.Create(ctx, nil, "r1", "alice", "bob", s.fn)
 	if m.Len() != 1 {
 		t.Fatal("创建后应有 1 个房间")
 	}
-	r.Send(Cmd{PlayerId: "alice", Type: "game_over"})
+	r.Close() // ★ 客户端已不能发 game_over 关房间（Day 11 删掉了），直接关
 	time.Sleep(50 * time.Millisecond)
 	if m.Len() != 0 {
 		t.Fatalf("房间关闭后应从 Manager 移除，实际还剩 %d", m.Len())

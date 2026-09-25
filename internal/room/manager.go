@@ -3,6 +3,8 @@ package room
 import (
 	"context"
 	"sync"
+
+	"github.com/DDCcheng/pet/internal/battle"
 )
 
 type Manager struct {
@@ -11,11 +13,12 @@ type Manager struct {
 }
 
 func NewManager() *Manager { return &Manager{rooms: map[string]*Room{}} }
-func (m *Manager) Create(ctx context.Context, id string, a, b string, out func(string, []byte)) *Room {
+func (m *Manager) Create(ctx context.Context, st *battle.State, id string, a, b string, out func(string, []byte)) *Room {
 	r := New(id, a, b, out)
 	m.mu.Lock()
 	m.rooms[id] = r
 	m.mu.Unlock()
+	r.Battle = st
 	go func() {
 		r.Run(ctx)
 		m.Remove(id)

@@ -3,9 +3,12 @@ package room
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"sync"
 	"time"
+
+	"github.com/DDCcheng/pet/internal/battle"
 )
 
 type Cmd struct {
@@ -22,6 +25,8 @@ type Room struct {
 	once    sync.Once
 	Out     func(playerId string, payload []byte)
 	Grace   time.Duration
+	Battle  *battle.State
+	seq     uint64
 }
 
 const emptyGrace = 3 * time.Minute
@@ -63,6 +68,37 @@ func (r *Room) handle(st *session, cmd Cmd, startGrace, cancelGrace func()) bool
 		} else {
 			r.status("waiting")
 		}
+		if r.Battle != nil {
+			if !st.started && countTrue(st.online) == 2 {
+				st.started = true
+				r.pushState()
+			} else if st.started {
+				r.sendView(cmd.PlayerId)
+			}
+		}
+	case "play_card", "end_turn", "attack":
+		if r.Battle == nil {
+			r.sendErr(cmd.PlayerId, errors.New("对局未开始"))
+			return false
+		}
+		var a battle.Action
+		if err := json.Unmarshal(cmd.Data, &a); err != nil {
+			r.sendErr(cmd.PlayerId, errors.New("action错误"))
+			return false
+		}
+		a.Type = cmd.Type
+		if err := r.Battle.Apply(cmd.PlayerId, a); err != nil {
+			r.sendErr(cmd.PlayerId, err)
+			return false
+		}
+		r.pushState()
+		if r.Battle.Over {
+			r.broadcast(map[string]string{
+				"type":   "game_over",
+				"winner": r.Battle.Winner,
+			})
+			return true
+		}
 
 	case "leave":
 		st.online[cmd.PlayerId] = false
@@ -71,9 +107,6 @@ func (r *Room) handle(st *session, cmd Cmd, startGrace, cancelGrace func()) bool
 		} else {
 			r.status("waiting") // 还剩一个人，告诉他在等对手
 		}
-	case "game_over":
-		st.over = true
-		return true
 	default:
 		log.Printf("room%s,unknown order %s", r.Id, cmd.Type)
 	}
@@ -127,3 +160,51 @@ func (r *Room) Run(ctx context.Context) {
 }
 
 func (r *Room) Close() { r.once.Do(func() { close(r.quit) }) }
+
+func (r *Room) sendView(pid string) {
+	if r.Out == nil || r.Battle == nil {
+		return
+	}
+	for i, p := range r.Players {
+		if p == pid {
+			v := r.Battle.ViewFor(i)
+			v.Seq = r.seq
+			msg := struct {
+				Type string `json:"type"`
+				battle.View
+			}{"game_state", v}
+			b, _ := json.Marshal(msg)
+			r.Out(pid, b)
+			return
+		}
+	}
+
+}
+
+func (r *Room) pushState() {
+	if r.Out == nil || r.Battle == nil {
+		return
+	}
+	r.seq++
+	for _, pid := range r.Players {
+		r.sendView(pid)
+	}
+}
+
+func (r *Room) sendErr(pid string, err error) {
+	var pe *battle.Err
+	code := "internal"
+	msg := err.Error()
+	if errors.As(err, &pe) {
+		code = string(pe.Code)
+		msg = pe.Msg
+	}
+	b, _ := json.Marshal(map[string]string{
+		"type": "error",
+		"code": code,
+		"msg":  msg,
+	})
+	if r.Out != nil {
+		r.Out(pid, b)
+	}
+}
