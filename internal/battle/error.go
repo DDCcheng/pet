@@ -14,10 +14,10 @@ const (
 	CodeUnknownCard    Code = "unknown_card"
 	CodeNotImplemented Code = "not_implemented"
 	CodeNotInGame      Code = "not_in_game"
-	CodeMinionNotFound Code = "minion_notfound"
-	CodeCantAttack     Code = "can_attack"
-	CodeTargetNotFound Code = "target_notfound"
-	CodeInvalidTarget  Code = "target_invalid"
+	CodeMinionNotFound Code = "minion_not_found"
+	CodeCantAttack     Code = "cant_attack"
+	CodeTargetNotFound Code = "target_not_found"
+	CodeInvalidTarget  Code = "invalid_target"
 )
 
 type Err struct {

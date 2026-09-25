@@ -2,6 +2,7 @@ package battle
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -138,9 +139,6 @@ func TestSummonIndependentInstances(t *testing.T) {
 	}
 }
 
-// Summon 是这三条规则的唯一来源（playCard 不再重复检查），所以它的错误必须带码。
-// ★ Day 10 的卡牌效果会直接调 Summon，那条路径不经过 playCard，
-// 没有别的地方能替它把错误码补上——只有这里守着。
 func TestSummonRejects(t *testing.T) {
 	c := cat(t)
 	s := mustNewState(t, c, PlayerInit{"alice", cards()}, PlayerInit{"bob", cards()}, 1)
@@ -176,9 +174,6 @@ func TestInstIDDeterministic(t *testing.T) {
 	}
 }
 
-// TestNewStateRejects 钉住构造期的输入校验。
-// ★ 每条都断言 s == nil：只断言 err != nil 的话，一个"既返回错误又返回半成品 State"
-// 的实现照样能过，调用方习惯性忽略 err 时会拿着残废对象跑，比 panic 更难查。
 func TestNewStateRejects(t *testing.T) {
 	c := cat(t)
 	tests := []struct {
@@ -232,8 +227,6 @@ func TestNewStateRejects(t *testing.T) {
 	}
 }
 
-// 两个 ID 都为空时，应该报"ID 不能为空"而不是"两人同名"。
-// ★ 这条不是吹毛求疵：它把 state.go 里空值检查必须排在重名检查之前这个顺序钉住了。
 func TestNewStateEmptyIDBeatsDuplicate(t *testing.T) {
 	_, err := NewState("r", cat(t), PlayerInit{"", cards()}, PlayerInit{"", cards()}, 1)
 	if err == nil {
@@ -242,4 +235,97 @@ func TestNewStateEmptyIDBeatsDuplicate(t *testing.T) {
 	if strings.Contains(err.Error(), "同名") || strings.Contains(err.Error(), "duplicate") {
 		t.Fatalf("空 ID 应优先报空值错误，got %q", err)
 	}
+}
+
+// thickCards 一副够厚的卡组：给那些需要很多回合、又不想被疲劳干扰的测试用。
+func thickCards(n int) []string {
+	out := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		out = append(out, "slime")
+	}
+	return out
+}
+
+// codeOf 把 error 压成一个可比较的短字符串。
+func codeOf(err error) string {
+	if err == nil {
+		return "ok"
+	}
+	var e *Err
+	if errors.As(err, &e) {
+		return string(e.Code)
+	}
+	return "other:" + err.Error()
+}
+
+// fingerprint 把一局的可见状态压成一行行文本，用来比较两次重放的结果。
+// ★ 为什么不直接 reflect.DeepEqual(*State)：那会把 rng 和 cat 的内部结构一起比进去，
+//
+//	等于把测试耦合到 math/rand 的实现细节上；而且失败时只报 "not equal"，看不出差在哪。
+//	压成文本后，失败信息本身就是 diff。
+func fingerprint(s *State) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "turn=%d round=%d over=%v winner=%q\n", s.Turn, s.Round, s.Over, s.Winner)
+	for i, p := range s.Players {
+		fmt.Fprintf(&b, "p%d=%s hp=%d mana=%d/%d fatigue=%d hand=%v deck=%d\n",
+			i, p.ID, p.HP, p.Mana, p.MaxMana, p.Fatigue, p.Hand, len(p.Deck))
+		for _, m := range p.Board {
+			fmt.Fprintf(&b, "  %s %s %d/%d can=%v\n", m.InstID, m.CardID, m.Atk, m.HP, m.CanAttack)
+		}
+	}
+	return b.String()
+}
+
+func TestReplayDeterministic(t *testing.T) {
+	acts := []Action{
+		{Type: "play_card", CardID: "slime"},           // 1 费，成功 → m1
+		{Type: "play_card", CardID: "slime"},           // 费不够，拒
+		{Type: "attack", InstID: "m1", Target: "face"}, // 召唤当回合，拒
+		{Type: "end_turn"},
+
+		{Type: "play_card", CardID: "slime"}, // bob → m2
+		{Type: "end_turn"},
+
+		{Type: "attack", InstID: "m1", Target: "face"}, // 打脸
+		{Type: "play_card", CardID: "slime"},           // → m3
+		{Type: "play_card", CardID: "slime"},           // → m4
+		{Type: "end_turn"},
+
+		{Type: "attack", InstID: "m2", Target: "m1"}, // 互殴，双方各扣 1
+		{Type: "end_turn"},
+
+		{Type: "attack", InstID: "m3", Target: "m2"}, // 打死 m2
+		{Type: "attack", InstID: "m1", Target: "face"},
+		{Type: "attack", InstID: "m4", Target: "face"},
+		{Type: "end_turn"},
+
+		{Type: "play_card", CardID: "slime"}, // bob → m5
+		{Type: "end_turn"},
+
+		{Type: "attack", InstID: "m1", Target: "m5"}, // m1 换掉自己
+		{Type: "end_turn"},
+	}
+
+	run := func() (string, []string) {
+		s := mustNewState(t, cat(t),
+			PlayerInit{"alice", thickCards(30)},
+			PlayerInit{"bob", thickCards(30)}, 99)
+		codes := make([]string, 0, len(acts))
+		for _, a := range acts {
+			// ★ 执行者固定取"当前回合方"，所以整个序列和谁先手无关，只和动作顺序有关
+			codes = append(codes, codeOf(s.Apply(s.Players[s.Turn].ID, a)))
+		}
+		return fingerprint(s), codes
+	}
+
+	f1, c1 := run()
+	f2, c2 := run()
+
+	if !reflect.DeepEqual(c1, c2) {
+		t.Fatalf("两次重放的错误序列不一致:\n%v\n%v", c1, c2)
+	}
+	if f1 != f2 {
+		t.Fatalf("两次重放的最终状态不一致:\n--- 第一次 ---\n%s\n--- 第二次 ---\n%s", f1, f2)
+	}
+	t.Logf("重放结果:\n%s\n错误序列: %v", f1, c1)
 }

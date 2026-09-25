@@ -60,7 +60,6 @@ func (s *State) shuffle(d []string) {
 	s.rng.Shuffle(len(d), func(i, j int) { d[i], d[j] = d[j], d[i] })
 }
 
-// Draw 从牌库顶抽一张进手牌。牌库空了返回 false（疲劳规则 Day 10 再说）。
 func (s *State) Draw(i int) (string, bool) {
 	p := s.Players[i]
 	if len(p.Deck) == 0 {
@@ -78,7 +77,7 @@ func (s *State) newInstID() string {
 	return fmt.Sprintf("m%d", s.nextInstID)
 }
 
-// Summon 把一张随从卡变成场上的一只。Day 9 的 Apply 会调它。
+// 保证：属性从卡表拷贝，场上不超上限，InstID 全局唯一递增
 func (s *State) Summon(playerIdx int, cardID string) (Minion, error) {
 	// 查卡表 → 校验是 minion → 校验场上没满 → 拷贝属性建实例
 	card, ok := s.cat.Get(cardID)
@@ -119,7 +118,11 @@ func (s *State) beginTurn(i int) {
 		p.MaxMana++
 	}
 	p.Mana = p.MaxMana
-	s.Draw(i)
+	if _, ok := s.Draw(i); !ok {
+		p.Fatigue++ // 第 1 次空抽扣 1，第 2 次扣 2…
+		p.HP -= p.Fatigue
+		s.checkOver() // ★ 疲劳能直接终结对局
+	}
 	for k := range p.Board {
 		p.Board[k].CanAttack = true
 	}
@@ -133,4 +136,46 @@ func (s *State) indexOf(playerId string) int {
 		}
 	}
 	return -1
+}
+
+func (s *State) DisplayRound() int { return (s.Round + 1) / 2 }
+
+func (s *State) checkOver() { // HP<=0 → Over=true, Winner=对方ID
+	if s.Over {
+		return
+	}
+	d0, d1 := s.Players[0].HP <= 0, s.Players[1].HP <= 0
+	switch {
+	case d0 && d1:
+		s.Over, s.Winner = true, "" // 平局
+	case d0:
+		s.Winner = s.Players[1].ID
+		s.Over = true
+	case d1:
+		s.Winner = s.Players[0].ID
+		s.Over = true
+	}
+}
+
+func (s *State) removeDead() {
+	for _, p := range s.Players {
+		j := 0
+		for k := range p.Board {
+			if p.Board[k].HP > 0 {
+				p.Board[j] = p.Board[k]
+				j++
+			}
+		}
+		p.Board = p.Board[:j]
+	}
+
+}
+
+func findMinion(p *Player, instID string) (*Minion, int) {
+	for k := range p.Board {
+		if p.Board[k].InstID == instID {
+			return &p.Board[k], k
+		}
+	}
+	return nil, -1
 }

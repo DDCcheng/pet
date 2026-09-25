@@ -30,13 +30,14 @@ type Player struct {
 	Deck    []string `json:"-"`        // 牌库（CardID），对手不可见
 	Hand    []string `json:"-"`        // 手牌，对手只知道数量
 	Board   []Minion `json:"board"`
+	Fatigue int      `json:"fatigue"` //疲劳规则
 }
 
 type State struct {
 	RoomID  string     `json:"room_id"`
 	Players [2]*Player `json:"players"`
-	Turn    int        `json:"turn"` // 当前该谁行动：0 或 1
-	Round   int        `json:"round"`
+	Turn    int        `json:"turn"`  // 当前该谁行动：0 或 1
+	Round   int        `json:"round"` // ★ 单位是 ply（半回合）：每次换手 +1，一个完整回合 = 2
 	Seed    int64      `json:"seed"`
 	Over    bool       `json:"over"`
 	Winner  string     `json:"winner"`
