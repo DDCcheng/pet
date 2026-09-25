@@ -18,27 +18,30 @@ type Cmd struct {
 }
 
 type Room struct {
-	Id      string
-	Players [2]string
-	inbox   chan Cmd
-	quit    chan struct{}
-	once    sync.Once
-	Out     func(playerId string, payload []byte)
-	Grace   time.Duration
-	Battle  *battle.State
-	seq     uint64
+	Id        string
+	Players   [2]string
+	inbox     chan Cmd
+	quit      chan struct{}
+	once      sync.Once
+	Out       func(playerId string, payload []byte)
+	Grace     time.Duration
+	Battle    *battle.State
+	seq       uint64
+	TurnLimit time.Duration
 }
 
+const defaultTurn = 60 * time.Second
 const emptyGrace = 3 * time.Minute
 
 func New(id string, a, b string, out func(string, []byte)) *Room {
 	return &Room{
-		Id:      id,
-		Players: [2]string{a, b},
-		inbox:   make(chan Cmd, 64),
-		quit:    make(chan struct{}),
-		Out:     out,
-		Grace:   emptyGrace,
+		Id:        id,
+		Players:   [2]string{a, b},
+		inbox:     make(chan Cmd, 64),
+		quit:      make(chan struct{}),
+		Out:       out,
+		Grace:     emptyGrace,
+		TurnLimit: defaultTurn,
 	}
 }
 
@@ -116,11 +119,24 @@ func (r *Room) handle(st *session, cmd Cmd, startGrace, cancelGrace func()) bool
 func (r *Room) Run(ctx context.Context) {
 	state := newSession(r.Players)
 	grace := r.Grace
+	turnLimit := r.TurnLimit
+	if turnLimit <= 0 {
+		turnLimit = defaultTurn
+	}
 	if grace <= 0 {
 		grace = emptyGrace
 	}
 	var graceTimer *time.Timer
 	var graceC <-chan time.Time
+	var turnTimer *time.Timer
+	var turnC <-chan time.Time
+	resetTurn := func() {
+		if turnTimer != nil {
+			turnTimer.Stop()
+		}
+		turnTimer = time.NewTimer(turnLimit)
+		turnC = turnTimer.C
+	}
 	startGrace := func() {
 		if graceTimer != nil {
 			return // 已经在计时了
@@ -139,18 +155,44 @@ func (r *Room) Run(ctx context.Context) {
 
 	defer func() {
 		cancelGrace()
+		if turnTimer != nil {
+			turnTimer.Stop()
+		}
 		r.Close()
 		log.Printf("room %s closed", r.Id)
 	}()
+	lastTurn := -1
+	checkTurn := func() {
+		if r.Battle != nil && state.started && !r.Battle.Over && r.Battle.Turn != lastTurn {
+			lastTurn = r.Battle.Turn
+			resetTurn()
+		}
+	}
 	for {
 		select {
 		case cmd := <-r.inbox:
 			if r.handle(state, cmd, startGrace, cancelGrace) {
-				return // handle 说该关房间了
+				return // 该关房间了
 			}
+			checkTurn()
 		case <-graceC:
 			log.Printf("room%s:两人断线超时%s,close", r.Id, emptyGrace)
 			return
+		case <-turnC:
+			turnC = nil
+			nowPlayer := r.Battle.Players[r.Battle.Turn].ID
+			if err := r.Battle.Apply(nowPlayer, battle.Action{Type: "end_turn"}); err != nil {
+				log.Printf("room %s: 超时自动 end_turn 失败: %v", r.Id, err)
+			}
+			r.pushState()
+			if r.Battle.Over {
+				r.broadcast(map[string]string{
+					"type":   "game_over",
+					"winner": r.Battle.Winner,
+				})
+				return
+			}
+			checkTurn()
 		case <-ctx.Done():
 			return
 		case <-r.quit:
