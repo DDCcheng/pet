@@ -90,6 +90,17 @@ A ─WS→ readLoop(A) ─inbox(64)→ room goroutine ─sendA(256)→ writeLoop
 - 落库用 `context.Background()` 派生的新 ctx。关服时房间 ctx 和 signal ctx 都已经取消，如果沿用它们，战报会写不进去。
 - 关服顺序：`srv.Shutdown` → `rooms.Wait()`（等所有房间写完战报）→ `defer db.Close()`。
 
+### 回放与确定性
+
+服务端权威：客户端只发意图，规则全在服务端跑。规则是确定性的：同一个 seed、同一组卡组、同一串被接受的动作，结果一定相同。所以战报不存快照，回放就是把动作重新跑一遍。
+
+- **逐步校验和**：每条动作日志带一个 `h`，是这一步之后完整局面的 fnv64a（包括双方手牌、牌库顺序、下一个随从编号）。重放时逐步比对，第一个对不上的动作就是分叉点。只核对终局不够：改了 seed 但胜负和回合数碰巧一样的战报，只有逐步校验才能发现。这个字段之前的老战报没有 `h`，退回只核对终局。
+- **上帝视角帧**：`GET /reports/{room_id}/replay` 在服务端重放，返回每一步之后的双方完整局面（含两边手牌），前端按 `at_ms` 播放即可，不用自己实现规则。
+- **谁能看**：只有对局双方能拿回放。其他人和不存在的房间一样返回 404，不暴露房间是否存在。
+- **卡表变了**：战报里存了打这局时卡表的 sha256。和当前卡表不一致时返回 409 `cards_changed`，因为用新数值重放出来的不是当时那局。重放和战报对不上时返回 409 `replay_mismatch`。
+- **Fuzz**：`FuzzReplayDeterministic` 用随机卡组和随机动作（合法、非法混着）打一局，每一步检查规则不变量（血量、法力、场上数量、随从编号唯一、牌守恒、胜负一致），被拒的动作不能改任何状态，最后重放两次，逐步校验和都要和线上一致。
+- **批量校验**：`go run ./scripts/replay -all` 把库里每一局都重放一遍，`-room <id>` 打印一局的逐帧时间轴。
+
 ## 目录
 
 ```
@@ -97,12 +108,14 @@ server/            main：接线、战报落库、路由
 internal/auth      登录、保存卡组、WebSocket（readLoop/writeLoop）、限速、/metrics
 internal/match     Redis 匹配
 internal/room      房间 actor、Manager、动作日志与战报
-internal/battle    纯规则：NewState / Apply / ViewFor，无 IO
+internal/battle    纯规则：NewState / Apply / ViewFor / Replay，无 IO
+internal/replay    战报 → 逐帧回放，回放接口和校验工具共用
 internal/deck      卡表加载、卡组校验
 internal/store     MySQL 读写
 configs/cards.yaml 卡表（改数值不用重新编译）
 deployments/       docker-compose、建表、测试账号
 scripts/bot        对打机器人
+scripts/replay     战报重放与批量校验
 ```
 
 ## 协议
@@ -114,6 +127,8 @@ scripts/bot        对打机器人
 | POST | `/login` | `{"username","password"}` | `{"token","player_id"}`；401 账号或密码错，429 登录太频繁 |
 | POST/PUT | `/decks` | 头 `Authorization: Bearer <token>`，体 `{"cards":[...]}`，8–12 张，单卡 ≤2 | `{"ok":"true","owner"}` |
 | GET | `/ws?token=` | 升级为 WebSocket | 403 来源不允许，401 token 无效，503 token 存储不可用 |
+| GET | `/reports?limit=20` | 头 `Authorization: Bearer <token>` | 自己最近的对局：`room_id`、`opponent`、`result`（win/lose/draw/unfinished）、`end_reason`、`rounds`、`first_hand`、`started_at`、`duration_ms`；limit 最大 100 |
+| GET | `/reports/{room_id}/replay` | 同上 | `players`（[0] 先手）、`winner`、`seed`、`frames`：每帧 `index`、`at_ms`、`player`、`action`、`state`（双方完整局面）；404 不存在或不是参与者，409 `cards_changed` / `replay_mismatch` |
 | GET | `/metrics` | — | 纯文本指标 |
 
 ### WebSocket：客户端 → 服务端
@@ -150,7 +165,12 @@ go test -race -count=3 ./...
 ```
 
 - `internal/match` 和 `internal/auth` 的 Redis 用例需要本地 Redis（`127.0.0.1:6379`，可用 `REDIS_ADDR` 覆盖，分别用 DB 15 和 DB 14）。连不上时这些用例会跳过，不会失败。
-- `scripts/bot` 里有进程内的端到端测试：真 WebSocket 加真房间，两个 bot 打完一整局，并核对战报。
+- `scripts/bot` 里有进程内的端到端测试：真 WebSocket 加真房间，两个 bot 打完一整局，核对战报，再用战报重放，终局必须和线上完全一样。
+- Fuzz（确定性 + 规则不变量）：
+  ```bash
+  go test ./internal/battle -run '^$' -fuzz=FuzzReplayDeterministic -fuzztime=5m
+  ```
+- 重放库里所有战报：`go run ./scripts/replay -all`（默认连 `127.0.0.1:3307`，`-dsn` 可改）。
 - 端到端（真库）：按"快速开始"起服务后跑 bot，再查战报：
   ```sql
   SELECT room_id, winner, end_reason, rounds, JSON_LENGTH(actions) FROM battle_reports;
@@ -167,7 +187,8 @@ go test -race -count=3 ./...
 - **账号安全**：没有登出接口；登录限速只按 IP，没有按账号统计失败次数锁定；部署在反向代理后面时要改成信任代理加的 `X-Forwarded-For`。
 - **先手固定**：匹配时排队最早的一方是 `Players[0]`，永远先手（`State.Turn` 从 0 开始），后手也没有补偿。bot 对局里先手赢了 29 局中的 25 局（86%），玩家还能靠抢先排队拿先手。改法：用 seed 随机决定先手，后手多发一张牌。
 - **法术卡**（bolt、heal）在卡表里，但服务端没实现，出了会回 `not_implemented`。
-- **回放**：战报里已经有重放需要的全部数据，`battle.Replay` 还没写。
+- **回放依赖当时的卡表**：改了 `cards.yaml` 之后，旧战报只能返回 `cards_changed`，不能回放。要支持的话得按 `cards_hash` 保存历史卡表。
+- **回放是整包返回**：一局几十到一百多帧，一次性返回 JSON。对局很长时可以改成只返回动作，让前端用同一套规则（比如编译成 WASM）自己推演。
 - **inbox 两人共享**：限速挡住了单人刷指令，但 inbox 满时丢的可能是任何一方的指令。客户端要靠 `seq` 跳号发现丢失，再重新 `join`。
 - **客户端丢了 room_id**：服务端不会主动推 `resume`，需要客户端自己保存 `room_id`。
 - **日志**：用的是 `log.Printf`，没有结构化日志（slog）。
