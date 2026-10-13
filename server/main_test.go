@@ -2,9 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/DDCcheng/pet/internal/auth"
 	"github.com/DDCcheng/pet/internal/room"
 )
 
@@ -67,5 +70,14 @@ func TestToBattleReport(t *testing.T) {
 				t.Fatal("不是合法 JSON，MySQL JSON 列会拒收")
 			}
 		})
+	}
+}
+
+func TestRoutesExposeMetrics(t *testing.T) {
+	s := &auth.Server{Conns: map[string]*auth.WsClient{}, RoomMgr: room.NewManager()}
+	rec := httptest.NewRecorder()
+	routes(s).ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "pet_rooms_active 0") {
+		t.Fatalf("code=%d body=%q", rec.Code, rec.Body.String())
 	}
 }

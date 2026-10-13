@@ -87,6 +87,7 @@ func routes(s *auth.Server) http.Handler {
 	mux.HandleFunc("/login", s.Login)
 	mux.HandleFunc("/decks", s.Savedecks)
 	mux.HandleFunc("/ws", s.ServerWs)
+	mux.HandleFunc("/metrics", s.Metrics)
 	return mux
 }
 
