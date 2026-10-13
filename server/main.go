@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"os/signal"
 	"syscall"
 	"time"
@@ -37,6 +38,20 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// newLoginLimiter：每个 IP 每秒 rate 次登录，突发 10 次。rate<=0 表示关闭（压测时所有 bot 来自同一个 IP）。
+func newLoginLimiter(v string) *auth.IPLimiter {
+	rate, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		log.Printf("PET_LOGIN_RATE=%q 不是数字，按 1 处理", v)
+		rate = 1
+	}
+	if rate <= 0 {
+		log.Printf("登录限速已关闭")
+		return nil
+	}
+	return auth.NewIPLimiter(rate, 10)
 }
 
 func openMysql() (*sql.DB, error) {
@@ -179,6 +194,9 @@ func run() error {
 		Cat:    cat,
 		Tokens: &auth.RedisTokens{RDB: rdb},
 		Conns:  map[string]*auth.WsClient{},
+
+		AllowedOrigins: auth.ParseOrigins(os.Getenv("PET_ALLOWED_ORIGINS")),
+		LoginLimiter:   newLoginLimiter(envOr("PET_LOGIN_RATE", "1")),
 	}
 	mm := newMatcher(rdb)
 	rooms := room.NewManager()

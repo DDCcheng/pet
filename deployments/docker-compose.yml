@@ -31,6 +31,10 @@ services:
     environment:
       PET_MYSQL_DSN: "root:pet@tcp(mysql:3306)/pet?parseTime=true&charset=utf8mb4"
       PET_REDIS_ADDR: "redis:6379"
+      # /login 每个 IP 每秒几次。压测时所有 bot 来自同一个 IP，用 PET_LOGIN_RATE=0 docker compose up -d 关掉
+      PET_LOGIN_RATE: "${PET_LOGIN_RATE:-1}"
+      # 浏览器前端的来源，逗号分隔，例如 http://localhost:5173；不填只允许同源
+      PET_ALLOWED_ORIGINS: "${PET_ALLOWED_ORIGINS:-}"
     ports:
       - "8080:8080"
     depends_on:

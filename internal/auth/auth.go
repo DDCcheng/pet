@@ -34,6 +34,9 @@ type Server struct {
 	MM      *match.Manager
 	RoomMgr *room.Manager
 	Cat     *deck.Catalog
+
+	AllowedOrigins []string   // WebSocket 允许的浏览器来源；空表示只允许同源
+	LoginLimiter   *IPLimiter // /login 按 IP 限速；nil 表示不限
 }
 
 type saveDeckReq struct {
@@ -41,7 +44,8 @@ type saveDeckReq struct {
 }
 
 func readJSON(r *http.Request, dest any) error {
-	return json.NewDecoder(r.Body).Decode(dest)
+	// 请求体上限 64KB：卡组和登录都只有几百字节，不设上限的话一个超大请求体就能占满内存
+	return json.NewDecoder(http.MaxBytesReader(nil, r.Body, 64<<10)).Decode(dest)
 }
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -54,6 +58,12 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 	//valid method
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, loginResp{Error: "method not allowed"})
+		return
+	}
+	// 限速放在查库和 bcrypt 之前，被拒的请求几乎不花 CPU
+	if s.LoginLimiter != nil && !s.LoginLimiter.Allow(clientIP(r)) {
+		w.Header().Set("Retry-After", "1")
+		writeJSON(w, http.StatusTooManyRequests, loginResp{Error: "too many login attempts"})
 		return
 	}
 	//valid body

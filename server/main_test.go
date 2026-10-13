@@ -98,3 +98,12 @@ func TestEnvOr(t *testing.T) {
 		})
 	}
 }
+
+func TestNewLoginLimiter(t *testing.T) {
+	if newLoginLimiter("0") != nil || newLoginLimiter("-1") != nil {
+		t.Fatal("rate <= 0 should disable the limiter")
+	}
+	if newLoginLimiter("1") == nil || newLoginLimiter("abc") == nil {
+		t.Fatal("default / bad value should keep the limiter on")
+	}
+}

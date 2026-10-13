@@ -14,12 +14,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		return true
-	},
-}
-
 const (
 	pongWait   = 60 * time.Second
 	pingPeriod = pongWait * 9 / 10 // 必须 < pongWait
@@ -189,6 +183,11 @@ func (c *WsClient) writeLoop() {
 }
 
 func (s *Server) ServerWs(w http.ResponseWriter, r *http.Request) {
+	// 先查 Origin 再查 token：Origin 判断是纯内存操作，外站的请求不该再去 Redis 查一次
+	if !s.checkOrigin(r) {
+		http.Error(w, "origin not allowed", http.StatusForbidden)
+		return
+	}
 	token := r.URL.Query().Get("token")
 	username, err := s.Tokens.Lookup(r.Context(), token)
 	if err != nil {
@@ -196,7 +195,7 @@ func (s *Server) ServerWs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, msg, code)
 		return
 	}
-	conn, err := upgrader.Upgrade(w, r, nil)
+	conn, err := s.upgrader().Upgrade(w, r, nil) // Origin 不在白名单时这里回 403
 	if err != nil {
 		log.Println("upgrade:", err)
 		return
