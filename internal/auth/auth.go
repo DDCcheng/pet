@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -62,9 +63,10 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, loginResp{Error: "bad json"})
 		return
 	}
-	_, pass, err := store.FindUserByName(s.DB, req.Username)
+	uid, pass, err := store.FindUserByName(s.DB, req.Username)
 	if err == sql.ErrNoRows {
-		// 401
+		// 401。用户不存在也跑一次 bcrypt，避免靠响应时间探测用户名是否存在
+		burnPasswordCheck(req.Password)
 		writeJSON(w, http.StatusUnauthorized, loginResp{Error: "invalid credentials"})
 		return
 	}
@@ -72,9 +74,18 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, loginResp{Error: "db error"})
 		return
 	}
-	if pass != req.Password {
+	ok, needUpgrade := checkPassword(pass, req.Password)
+	if !ok {
 		writeJSON(w, http.StatusUnauthorized, loginResp{Error: "invalid credentials"})
 		return
+	}
+	if needUpgrade {
+		// 老的明文密码：校验通过后顺手改写成哈希。失败只记日志，不影响这次登录
+		if h, err := HashPassword(req.Password); err == nil {
+			if err := store.UpdatePassword(s.DB, uid, h); err != nil {
+				log.Printf("upgrade password for %s: %v", req.Username, err)
+			}
+		}
 	}
 	token := fmt.Sprintf("%s-%d", req.Username, time.Now().UnixNano())
 	s.mu.Lock()

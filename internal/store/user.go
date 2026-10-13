@@ -13,6 +13,12 @@ func FindUserByName(db *sql.DB, name string) (id int64, pass string, err error) 
 	return
 }
 
+// UpdatePassword 把用户密码改写成新的哈希（明文老数据登录成功后升级用）。
+func UpdatePassword(db *sql.DB, userID int64, hash string) error {
+	_, err := db.Exec(`UPDATE users SET password = ? WHERE id = ?`, hash, userID)
+	return err
+}
+
 func UpsertDeck(db *sql.DB, userID int64, cardsJSON string) error {
 	_, err := db.Exec(
 		`INSERT INTO decks (user_id, cards_json) VALUES (?, ?)

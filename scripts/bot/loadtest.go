@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/DDCcheng/pet/internal/auth"
 	"github.com/DDCcheng/pet/internal/deck"
 	_ "github.com/go-sql-driver/mysql"
 )
@@ -141,6 +142,11 @@ func ensureUsers(dsn, prefix, pass string, n int) error {
 		return err
 	}
 	defer db.Close()
+	// 库里存 bcrypt 哈希。所有压测账号密码相同，只算一次哈希（一次几十毫秒，算 2000 次要好几秒）
+	hash, err := auth.HashPassword(pass)
+	if err != nil {
+		return err
+	}
 	const batch = 500
 	for i := 0; i < n; i += batch {
 		var q strings.Builder
@@ -151,7 +157,7 @@ func ensureUsers(dsn, prefix, pass string, n int) error {
 				q.WriteString(",")
 			}
 			q.WriteString("(?,?)")
-			args = append(args, fmt.Sprintf("%s%d", prefix, j), pass)
+			args = append(args, fmt.Sprintf("%s%d", prefix, j), hash)
 		}
 		if _, err := db.Exec(q.String(), args...); err != nil {
 			return err
