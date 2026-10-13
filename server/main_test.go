@@ -81,3 +81,20 @@ func TestRoutesExposeMetrics(t *testing.T) {
 		t.Fatalf("code=%d body=%q", rec.Code, rec.Body.String())
 	}
 }
+
+func TestEnvOr(t *testing.T) {
+	cases := []struct {
+		name, set, want string
+	}{
+		{"没设用默认", "", "127.0.0.1:6379"},
+		{"设了用环境变量", "redis:6379", "redis:6379"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("PET_TEST_ADDR", c.set)
+			if got := envOr("PET_TEST_ADDR", "127.0.0.1:6379"); got != c.want {
+				t.Fatalf("got %q want %q", got, c.want)
+			}
+		})
+	}
+}

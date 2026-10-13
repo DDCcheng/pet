@@ -31,8 +31,16 @@ const (
 )
 const cardPath = "configs/cards.yaml"
 
+// envOr 读环境变量，没设就用默认值。本地直接 go run 走上面的常量，容器里由 compose 注入。
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
 func openMysql() (*sql.DB, error) {
-	db, err := store.Open(mysqlDSN)
+	db, err := store.Open(envOr("PET_MYSQL_DSN", mysqlDSN))
 	if err != nil {
 		log.Fatalf("MySQL 连不上：%v\n请先执行 docker compose up -d", err)
 	}
@@ -40,9 +48,10 @@ func openMysql() (*sql.DB, error) {
 }
 
 func openRedis(ctx context.Context) (*redis.Client, error) {
-	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
+	addr := envOr("PET_REDIS_ADDR", redisAddr)
+	rdb := redis.NewClient(&redis.Options{Addr: addr})
 	if err := rdb.Ping(ctx).Err(); err != nil {
-		return nil, fmt.Errorf("Redis 连不上 %s（先跑 docker compose up -d）：%w", redisAddr, err)
+		return nil, fmt.Errorf("Redis 连不上 %s（先跑 docker compose up -d）：%w", addr, err)
 	}
 	return rdb, nil
 }

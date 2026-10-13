@@ -1,0 +1,5 @@
+.git
+.snap.tgz
+*.bundle
+*.md
+deployments
