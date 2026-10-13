@@ -25,8 +25,8 @@ type Minion struct {
 type Player struct {
 	ID      string   `json:"id"`
 	HP      int      `json:"hp"`
-	Mana    int      `json:"mana"`     // 本回合剩余
-	MaxMana int      `json:"max_mana"` // 本回合上限
+	Mana    int      `json:"mana"`     // 本回合剩余法力
+	MaxMana int      `json:"max_mana"` // 本回合上限法力
 	Deck    []string `json:"-"`        // 牌库（CardID），对手不可见
 	Hand    []string `json:"-"`        // 手牌，对手只知道数量
 	Board   []Minion `json:"board"`
@@ -34,13 +34,14 @@ type Player struct {
 }
 
 type State struct {
-	RoomID  string     `json:"room_id"`
-	Players [2]*Player `json:"players"`
-	Turn    int        `json:"turn"`  // 当前该谁行动：0 或 1
-	Round   int        `json:"round"` // ★ 单位是 ply（半回合）：每次换手 +1，一个完整回合 = 2
-	Seed    int64      `json:"seed"`
-	Over    bool       `json:"over"`
-	Winner  string     `json:"winner"`
+	RoomID    string      `json:"room_id"`
+	Players   [2]*Player  `json:"players"`
+	Turn      int         `json:"turn"`  // 当前该谁行动：0 或 1
+	Round     int         `json:"round"` // ★ 单位是 ply（半回合）：每次换手 +1，一个完整回合 = 2
+	Seed      int64       `json:"seed"`
+	Over      bool        `json:"over"`
+	Winner    string      `json:"winner"`
+	InitDecks [2][]string `json:"-"`
 
 	// ---- 以下小写，不导出、不序列化、只有房间 goroutine 能碰 ----
 	cat        *deck.Catalog

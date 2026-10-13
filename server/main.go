@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -54,18 +57,16 @@ func newMatcher(rdb *redis.Client) *match.Manager {
 	}
 }
 
-// loadDeckOrDefault 读玩家保存的卡组；没存过、读库失败、或卡表改过导致不合法，都退回默认卡组。
-// ★ 保存时校验过不代表现在还合法（卡表可能改了），开局前再校验一次。
 func loadDeckOrDefault(db *sql.DB, cat *deck.Catalog, username string) []string {
 	cards, err := store.LoadDeck(db, username)
 	if err == nil {
 		if verr := deck.ValidateDeck(cat, deck.Deck{Owner: username, Cards: cards}); verr == nil {
 			return cards
 		} else {
-			log.Printf("%s 的卡组已失效（%v），使用默认卡组", username, verr)
+			log.Printf("%s 的卡组已失效（%v),使用默认卡组", username, verr)
 		}
 	} else if !errors.Is(err, sql.ErrNoRows) {
-		log.Printf("读取 %s 的卡组失败（%v），使用默认卡组", username, err)
+		log.Printf("读取 %s 的卡组失败（%v),使用默认卡组", username, err)
 	}
 	return defaultDeck(cat)
 }
@@ -89,6 +90,51 @@ func routes(s *auth.Server) http.Handler {
 	return mux
 }
 
+// toBattleReport 把房间交出来的 Report 转成要落库的一行。纯函数，方便单测。
+func toBattleReport(cardsHash string, rep room.Report) (store.BattleReport, error) {
+	d, err := json.Marshal(rep.InitDecks)
+	if err != nil {
+		return store.BattleReport{}, err
+	}
+	actions := rep.Actions
+	if actions == nil {
+		actions = []room.LogEntry{} // 开局后没人动就中止：存 [] 而不是 null，回放时按数组读
+	}
+	a, err := json.Marshal(actions)
+	if err != nil {
+		return store.BattleReport{}, err
+	}
+	return store.BattleReport{
+		RoomID:        rep.RoomID,
+		PlayerA:       rep.Players[0],
+		PlayerB:       rep.Players[1],
+		Winner:        rep.Winner,
+		EndReason:     rep.Reason,
+		Seed:          rep.Seed,
+		Rounds:        rep.Rounds,
+		InitDecksJSON: d,
+		ActionsJSON:   a,
+		CardsHash:     cardsHash,
+		StartedAt:     rep.StartedAt,
+		EndedAt:       rep.EndedAt,
+	}, nil
+}
+
+// saveReport 在房间 goroutine 里被调用：出错只打日志，不能 log.Fatal 把整个服务带崩。
+func saveReport(db *sql.DB, cardsHash string, rep room.Report) {
+	br, err := toBattleReport(cardsHash, rep)
+	if err != nil {
+		log.Printf("room %s: 战报序列化失败 %v", rep.RoomID, err)
+		return
+	}
+	// 落库用新的 ctx：reason=aborted 时房间 ctx 和 main 的 signal ctx 都已取消
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := store.SaveBattleReport(ctx, db, br); err != nil {
+		log.Printf("room %s: 战报落库失败 %v", rep.RoomID, err)
+	}
+}
+
 func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -108,6 +154,13 @@ func run() error {
 	if err != nil {
 		return err
 	}
+
+	raw, err := os.ReadFile(cardPath)
+	if err != nil {
+		return err
+	}
+	sum := sha256.Sum256(raw)
+	cardsHash := hex.EncodeToString(sum[:])
 	log.Printf("卡表加载完成 %d张", cat.Len())
 	//objects in different packages
 	s := &auth.Server{
@@ -142,7 +195,9 @@ func run() error {
 		}
 		log.Printf("room %s: %s vs %s seed=%d", p.RoomID, p.A, p.B, seed)
 		// 3. 建房间。★ A/B 顺序必须和 NewState 一致：Room.Players[i] 与 Battle.Players[i] 是同一个人
-		rooms.Create(ctx, st, p.RoomID, p.A, p.B, s.SendTo)
+		rooms.Create(ctx, st, p.RoomID, p.A, p.B, s.SendTo, func(rep room.Report) {
+			saveReport(db, cardsHash, rep)
+		})
 		s.NotifyMatch(p.A, p.B, p.RoomID)
 	}
 	go mm.Run(ctx)
@@ -160,6 +215,7 @@ func run() error {
 	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutCtx)
+	rooms.Wait() // 等所有房间写完战报，再让 defer 关 DB
 	log.Println("bye")
 	return nil
 }

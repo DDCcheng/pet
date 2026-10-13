@@ -21,7 +21,7 @@ var upgrader = websocket.Upgrader{
 
 const (
 	pongWait   = 60 * time.Second
-	pingPeriod = pongWait * 9 / 10 // 54s，必须 < pongWait
+	pingPeriod = pongWait * 9 / 10 // 必须 < pongWait
 	writeWait  = 10 * time.Second
 	maxMsgSize = 32 << 10
 )
@@ -32,7 +32,6 @@ type wsMsg struct {
 	Data    json.RawMessage `json:"data,omitempty"`
 }
 
-// 包装一下conn，都写都在这里进行
 type WsClient struct {
 	srv    *Server
 	conn   *websocket.Conn
@@ -119,14 +118,20 @@ func (c *WsClient) readLoop(username string) {
 				RoomID string `json:"room_id"`
 			}
 			_ = json.Unmarshal(m.Data, &p)
-
 			r, ok := c.srv.RoomMgr.Get(p.RoomID)
 			if !ok {
-				c.Send(mustJSON(wsMsg{Type: "error", Payload: "room not found"}))
+				c.Send(mustJSON(wsMsg{Type: "error", Payload: "room_not_found"}))
 				break
 			}
-			c.roomId = p.RoomID // 记下来，断线时要用
-			r.Send(room.Cmd{PlayerId: username, Type: m.Type, Data: m.Data})
+			if !r.Has(username) {
+				log.Printf("ws: %s 尝试进入不属于自己的房间 %s", username, p.RoomID)
+				c.Send(mustJSON(wsMsg{Type: "error", Payload: "not_in_room"}))
+				break
+			}
+			c.roomId = p.RoomID
+			if !r.Send(room.Cmd{PlayerId: username, Type: m.Type, Data: m.Data}) {
+				c.Send(mustJSON(wsMsg{Type: "error", Payload: "room_busy_or_closed"}))
+			}
 		case "dequeue":
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			_ = c.srv.MM.Leave(ctx, username)

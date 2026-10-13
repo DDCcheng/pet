@@ -25,7 +25,7 @@ func startTimedRoom(t *testing.T, st *battle.State, limit time.Duration) (*Room,
 
 func roomClosed(r *Room) bool {
 	select {
-	case <-r.quit:
+	case <-r.Done():
 		return true
 	default:
 		return false

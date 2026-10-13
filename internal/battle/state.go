@@ -7,10 +7,9 @@ import (
 	"github.com/DDCcheng/pet/internal/deck"
 )
 
-// PlayerInit 是开局输入：谁、带什么卡组。
 type PlayerInit struct {
 	ID    string
-	Cards []string // CardID 列表，已经过 ValidateDeck
+	Cards []string
 }
 
 func NewState(roomID string, cat *deck.Catalog, a, b PlayerInit, seed int64) (*State, error) {
@@ -34,7 +33,7 @@ func NewState(roomID string, cat *deck.Catalog, a, b PlayerInit, seed int64) (*S
 		RoomID: roomID,
 		Seed:   seed,
 		cat:    cat,
-		rng:    rand.New(rand.NewSource(seed)), // ★ 每局独立的随机源
+		rng:    rand.New(rand.NewSource(seed)), // 独立的随机源
 		Turn:   0,
 		Round:  1,
 	}
@@ -44,6 +43,9 @@ func NewState(roomID string, cat *deck.Catalog, a, b PlayerInit, seed int64) (*S
 			HP:      StartHP,
 			MaxMana: 0,
 		}
+		cards := make([]string, len(init.Cards))
+		copy(cards, init.Cards)
+		st.InitDecks[i] = cards
 		p.Deck = append([]string(nil), init.Cards...)
 		st.shuffle(p.Deck)
 		st.Players[i] = p

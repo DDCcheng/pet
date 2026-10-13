@@ -113,7 +113,7 @@ func TestManagerRemovesClosedRoom(t *testing.T) {
 	s := newSink()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	r := m.Create(ctx, nil, "r1", "alice", "bob", s.fn)
+	r := m.Create(ctx, nil, "r1", "alice", "bob", s.fn, nil)
 	if m.Len() != 1 {
 		t.Fatal("创建后应有 1 个房间")
 	}

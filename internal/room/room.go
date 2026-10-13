@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
-	"sync"
 	"time"
 
 	"github.com/DDCcheng/pet/internal/battle"
@@ -21,35 +20,45 @@ type Room struct {
 	Id        string
 	Players   [2]string
 	inbox     chan Cmd
-	quit      chan struct{}
-	once      sync.Once
+	ctx       context.Context
+	cancel    context.CancelFunc
 	Out       func(playerId string, payload []byte)
 	Grace     time.Duration
 	Battle    *battle.State
 	seq       uint64
 	TurnLimit time.Duration
+	OnFinish  func(Report) // 由 main 注入：结束时怎么落库
+	log       []LogEntry   // 动作日志，只有房间 goroutine 读写
+	startedAt time.Time    // 开局时间，用来算 AtMs
 }
 
 const defaultTurn = 60 * time.Second
 const emptyGrace = 3 * time.Minute
 
 func New(id string, a, b string, out func(string, []byte)) *Room {
-	return &Room{
+	room := &Room{
 		Id:        id,
 		Players:   [2]string{a, b},
 		inbox:     make(chan Cmd, 64),
-		quit:      make(chan struct{}),
 		Out:       out,
 		Grace:     emptyGrace,
 		TurnLimit: defaultTurn,
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	room.ctx = ctx
+	room.cancel = cancel
+	return room
+
 }
 
 func (r *Room) Send(c Cmd) bool {
+	if r.ctx.Err() != nil {
+		return false
+	}
 	select {
 	case r.inbox <- c:
 		return true
-	case <-r.quit:
+	case <-r.ctx.Done():
 		return false
 	default:
 		return false
@@ -74,6 +83,7 @@ func (r *Room) handle(st *session, cmd Cmd, startGrace, cancelGrace func()) bool
 		if r.Battle != nil {
 			if !st.started && countTrue(st.online) == 2 {
 				st.started = true
+				r.startedAt = time.Now()
 				r.pushState()
 			} else if st.started {
 				r.sendView(cmd.PlayerId)
@@ -94,6 +104,7 @@ func (r *Room) handle(st *session, cmd Cmd, startGrace, cancelGrace func()) bool
 			r.sendErr(cmd.PlayerId, err)
 			return false
 		}
+		r.record(cmd.PlayerId, cmd.Type, cmd.Data, false)
 		r.pushState()
 		if r.Battle.Over {
 			r.broadcast(map[string]string{
@@ -116,7 +127,10 @@ func (r *Room) handle(st *session, cmd Cmd, startGrace, cancelGrace func()) bool
 	return false
 }
 
-func (r *Room) Run(ctx context.Context) {
+func (r *Room) Run(parent context.Context) {
+	stop := context.AfterFunc(parent, r.cancel)
+	reason := "finished"
+	defer stop()
 	state := newSession(r.Players)
 	grace := r.Grace
 	turnLimit := r.TurnLimit
@@ -154,6 +168,7 @@ func (r *Room) Run(ctx context.Context) {
 	}
 
 	defer func() {
+		r.finish(state, reason)
 		cancelGrace()
 		if turnTimer != nil {
 			turnTimer.Stop()
@@ -176,14 +191,18 @@ func (r *Room) Run(ctx context.Context) {
 			}
 			checkTurn()
 		case <-graceC:
-			log.Printf("room%s:两人断线超时%s,close", r.Id, emptyGrace)
+			log.Printf("room%s:两人断线超时%s,close", r.Id, grace)
+			reason = "abandoned"
 			return
 		case <-turnC:
 			turnC = nil
 			nowPlayer := r.Battle.Players[r.Battle.Turn].ID
 			if err := r.Battle.Apply(nowPlayer, battle.Action{Type: "end_turn"}); err != nil {
 				log.Printf("room %s: 超时自动 end_turn 失败: %v", r.Id, err)
+			} else {
+				r.record(nowPlayer, "end_turn", nil, true)
 			}
+
 			r.pushState()
 			if r.Battle.Over {
 				r.broadcast(map[string]string{
@@ -193,15 +212,18 @@ func (r *Room) Run(ctx context.Context) {
 				return
 			}
 			checkTurn()
-		case <-ctx.Done():
+		case <-r.ctx.Done():
+			reason = "aborted"
 			return
-		case <-r.quit:
-			return
+
 		}
 	}
 }
 
-func (r *Room) Close() { r.once.Do(func() { close(r.quit) }) }
+func (r *Room) Close() { r.cancel() }
+func (r *Room) Done() <-chan struct{} {
+	return r.ctx.Done()
+}
 
 func (r *Room) sendView(pid string) {
 	if r.Out == nil || r.Battle == nil {
@@ -249,4 +271,8 @@ func (r *Room) sendErr(pid string, err error) {
 	if r.Out != nil {
 		r.Out(pid, b)
 	}
+}
+
+func (r *Room) Has(pid string) bool {
+	return pid == r.Players[0] || pid == r.Players[1]
 }

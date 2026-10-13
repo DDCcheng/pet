@@ -253,7 +253,7 @@ func TestRoomGameOverClosesRoom(t *testing.T) {
 		t.Fatal("game_over 之前应先推一条 over=true 的最终状态")
 	}
 	select {
-	case <-r.quit:
+	case <-r.Done():
 	case <-time.After(time.Second):
 		t.Fatal("对局结束后房间没关")
 	}
