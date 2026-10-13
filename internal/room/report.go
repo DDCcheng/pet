@@ -13,6 +13,7 @@ type LogEntry struct {
 	Data   json.RawMessage `json:"data,omitempty"`
 	Auto   bool            `json:"auto,omitempty"` // 回合超时自动 end_turn
 	AtMs   int64           `json:"at_ms"`          // 距开局毫秒
+	Hash   string          `json:"h,omitempty"`    // 这一步做完后的局面校验和（battle.State.Checksum），回放时逐步比对
 }
 
 type Report struct {
@@ -34,6 +35,7 @@ func (r *Room) record(pid, typ string, data json.RawMessage, auto bool) {
 		Data:   data,
 		Auto:   auto,
 		AtMs:   time.Since(r.startedAt).Milliseconds(),
+		Hash:   r.Battle.Checksum(),
 	})
 }
 func (r *Room) finish(st *session, reason string) {

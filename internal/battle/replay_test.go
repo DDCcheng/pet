@@ -110,3 +110,22 @@ func TestGodViewSeesBothHandsAndIsACopy(t *testing.T) {
 		t.Fatal("GodView must be a deep copy")
 	}
 }
+
+func TestChecksum(t *testing.T) {
+	a := mustNewState(t, cat(t), PlayerInit{"alice", cards()}, PlayerInit{"bob", cards()}, 42)
+	b := mustNewState(t, cat(t), PlayerInit{"alice", cards()}, PlayerInit{"bob", cards()}, 42)
+	if a.Checksum() != b.Checksum() || len(a.Checksum()) != 16 {
+		t.Fatalf("same seed should give same checksum: %s %s", a.Checksum(), b.Checksum())
+	}
+	c := mustNewState(t, cat(t), PlayerInit{"alice", cards()}, PlayerInit{"bob", cards()}, 43)
+	if a.Checksum() == c.Checksum() {
+		t.Fatal("different seed should change the checksum")
+	}
+	// 只换牌库顺序（看不见的部分）也要变
+	before := a.Checksum()
+	d := a.Players[0].Deck
+	d[0], d[len(d)-1] = d[len(d)-1], d[0]
+	if a.Checksum() == before && d[0] != d[len(d)-1] {
+		t.Fatal("deck order must be part of the checksum")
+	}
+}

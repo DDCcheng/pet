@@ -113,6 +113,8 @@ func routes(s *auth.Server) http.Handler {
 	mux.HandleFunc("/decks", s.Savedecks)
 	mux.HandleFunc("/ws", s.ServerWs)
 	mux.HandleFunc("/metrics", s.Metrics)
+	mux.HandleFunc("GET /reports", s.ListReports)
+	mux.HandleFunc("GET /reports/{room_id}/replay", s.ReplayReport)
 	return mux
 }
 
@@ -197,6 +199,9 @@ func run() error {
 
 		AllowedOrigins: auth.ParseOrigins(os.Getenv("PET_ALLOWED_ORIGINS")),
 		LoginLimiter:   newLoginLimiter(envOr("PET_LOGIN_RATE", "1")),
+
+		Reports:   &store.Reports{DB: db},
+		CardsHash: cardsHash,
 	}
 	mm := newMatcher(rdb)
 	rooms := room.NewManager()

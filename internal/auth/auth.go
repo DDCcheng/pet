@@ -37,6 +37,9 @@ type Server struct {
 
 	AllowedOrigins []string   // WebSocket 允许的浏览器来源；空表示只允许同源
 	LoginLimiter   *IPLimiter // /login 按 IP 限速；nil 表示不限
+
+	Reports   ReportSource // 战报读取（列表 + 回放）
+	CardsHash string       // 当前卡表的 sha256，回放时和战报里记的比对
 }
 
 type saveDeckReq struct {
