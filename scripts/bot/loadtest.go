@@ -121,7 +121,10 @@ type loadConfig struct {
 
 type loadReport struct {
 	Config        loadConfig
-	Wall          time.Duration
+	Wall          time.Duration // 对局阶段用时（不含登录）
+	LoginWall     time.Duration // 登录阶段用时
+	LoginPerSec   float64
+	Login         dist // 单次 /login 耗时
 	Games         int // 完成的对局数（两边各报一次，已除以 2）
 	Failed        int
 	Actions       int
@@ -209,6 +212,36 @@ func runLoad(cfg loadConfig) (loadReport, error) {
 		}
 	}()
 
+	// 第一阶段：先把所有人登录好。bcrypt 故意很慢、服务端又限了并发，
+	// 登录和对局混在一起跑的话，测出来的是登录吞吐而不是房间容量，两者分开统计。
+	var loginLat samples
+	tokens := make([]string, cfg.Players)
+	loginStart := time.Now()
+	{
+		var lwg sync.WaitGroup
+		sem := make(chan struct{}, 32)
+		for i := 0; i < cfg.Players; i++ {
+			lwg.Add(1)
+			sem <- struct{}{}
+			go func() {
+				defer func() { <-sem; lwg.Done() }()
+				name := fmt.Sprintf("%s%d", cfg.Prefix, i)
+				t0 := time.Now()
+				tok, err := login(cfg.Addr, name, cfg.Pass)
+				if err != nil {
+					log.Printf("%s login: %v", name, err)
+					return
+				}
+				loginLat.add(time.Since(t0))
+				tokens[i] = tok
+			}()
+		}
+		lwg.Wait()
+	}
+	rep.LoginWall = time.Since(loginStart)
+	rep.Login = loginLat.dist()
+	rep.LoginPerSec = float64(rep.Login.N) / rep.LoginWall.Seconds()
+
 	start := time.Now()
 	var wg sync.WaitGroup
 	for i := 0; i < cfg.Players; i++ {
@@ -219,9 +252,8 @@ func runLoad(cfg loadConfig) (loadReport, error) {
 				time.Sleep(cfg.Ramp * time.Duration(i) / time.Duration(cfg.Players))
 			}
 			name := fmt.Sprintf("%s%d", cfg.Prefix, i)
-			tok, err := login(cfg.Addr, name, cfg.Pass)
-			if err != nil {
-				log.Printf("%s login: %v", name, err)
+			tok := tokens[i]
+			if tok == "" { // 登录阶段失败
 				failed.Add(int64(cfg.Games))
 				return
 			}
@@ -297,7 +329,8 @@ func runLoad(cfg loadConfig) (loadReport, error) {
 
 func (r loadReport) print() {
 	fmt.Printf("\n===== 压测结果 =====\n")
-	fmt.Printf("玩家 %d，每人 %d 局，动作间隔 %v，用时 %v\n", r.Config.Players, r.Config.Games, r.Config.Delay, r.Wall.Round(time.Millisecond))
+	fmt.Printf("登录阶段       %d 人用时 %v，%.0f 次/秒；单次 %s\n", r.Login.N, r.LoginWall.Round(time.Millisecond), r.LoginPerSec, r.Login)
+	fmt.Printf("玩家 %d，每人 %d 局，动作间隔 %v，对局阶段用时 %v\n", r.Config.Players, r.Config.Games, r.Config.Delay, r.Wall.Round(time.Millisecond))
 	fmt.Printf("完成对局 %d，失败 %d，非法动作 %d，客户端被限速 %d 次\n", r.Games, r.Failed, r.Illegal, r.RateLimited)
 	fmt.Printf("峰值同时在线房间 %d，峰值连接 %d\n", r.PeakRooms, r.PeakConns)
 	fmt.Printf("房间处理动作 %d 个，吞吐 %.0f 动作/秒\n", r.Actions, r.ActionsPerSec)

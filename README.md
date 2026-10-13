@@ -18,11 +18,18 @@ go run ./scripts/bot -games 5                          # bot1 vs bot2 打 5 局
 go run ./scripts/bot -users bot1,bot2,bot3,bot4 -games 10
 ```
 
-测试账号在 `deployments/seed.sql`：`alice` `bob` `bot1`~`bot4`，密码都是 `pet`。
+测试账号在 `deployments/seed.sql`：`alice` `bob` `bot1`~`bot4`，密码都是 `pet`（库里存的是 bcrypt 哈希）。
 
 > `init.sql` / `seed.sql` 只在 MySQL 数据卷**第一次初始化**时执行。改了建表语句要 `docker compose down` 再 `up`（会清空数据）。
 
 不用 Docker 跑服务：先 `docker compose up -d mysql redis`，再在仓库根目录 `go run ./server`。默认连 `127.0.0.1:3307` / `127.0.0.1:6379`，可用 `PET_MYSQL_DSN`、`PET_REDIS_ADDR` 覆盖。
+
+| 环境变量 | 默认 | 作用 |
+|---|---|---|
+| `PET_MYSQL_DSN` | `root:pet@tcp(127.0.0.1:3307)/pet...` | MySQL 连接串 |
+| `PET_REDIS_ADDR` | `127.0.0.1:6379` | Redis 地址（匹配队列 + 登录 token） |
+| `PET_LOGIN_RATE` | `1` | `/login` 每个 IP 每秒几次（突发 10）；`0` 关闭，压测时用 |
+| `PET_ALLOWED_ORIGINS` | 空 | 允许连 WebSocket 的浏览器来源，逗号分隔；空表示只允许同源 |
 
 ## 架构
 
@@ -45,7 +52,7 @@ A ─WS→ readLoop(A) ─inbox(64)→ room goroutine ─sendA(256)→ writeLoop
 ```
 
 - **房间是 actor**：`Battle`、`seq`、动作日志、在线状态都只由房间 goroutine 读写，不加锁。房间用一个 `for-select` 同时处理 `inbox`、断线宽限计时器、回合超时计时器和 `ctx.Done()`。
-- **两把锁都不碰对局状态**：`room.Manager.mu` 保护 `roomID→*Room` 表，`auth.Server.mu` 保护 `user→conn` 和 token 表。
+- **两把锁都不碰对局状态**：`room.Manager.mu` 保护 `roomID→*Room` 表，`auth.Server.mu` 保护 `user→conn` 表（token 在 Redis 里）。
 - **readLoop** 跑在 HTTP handler 的 goroutine 里，**writeLoop** 是单独 `go` 出来的，负责写消息和 ping。
 - **main 只负责接线**：把 `s.SendTo` 作为 `Out` 注入房间，把 `saveReport` 作为 `OnFinish` 注入房间。房间包不 import store。
 
@@ -58,6 +65,17 @@ A ─WS→ readLoop(A) ─inbox(64)→ room goroutine ─sendA(256)→ writeLoop
 | 每个连接的 `send`（256） | 非阻塞投递，满了丢这条并**踢掉这个连接**（CAS 保证只踢一次） | `pet_send_dropped_total` / `pet_slow_kicked_total` |
 
 房间 goroutine 向连接发消息永远不阻塞，所以一个读得慢的客户端只会把自己踢下线。之后它重连、`join` 就能拿到完整快照。
+
+### 安全
+
+| 措施 | 做法 |
+|---|---|
+| 密码 | bcrypt（cost 10）。老的明文记录在登录成功时自动改写成哈希；用户不存在也跑一次 bcrypt，响应时间不暴露用户名是否存在 |
+| bcrypt 并发上限 | 最多占一半 CPU 核，登录高峰排队，不拖慢对局 |
+| token | 32 字节 `crypto/rand`，Redis 里存 `tok:<sha256(token)>`，24 小时过期；无效回 401，Redis 不可用回 503 |
+| WebSocket Origin | 不带 Origin（bot / App）放行；否则只允许同源或 `PET_ALLOWED_ORIGINS` 里精确匹配的来源 |
+| 登录限速 | 按 TCP 对端 IP 的令牌桶，在查库和 bcrypt 之前拒绝，回 429 + `Retry-After` |
+| 请求体 | HTTP 64KB，WebSocket 32KB |
 
 ### 断线重连
 
@@ -93,9 +111,9 @@ scripts/bot        对打机器人
 
 | 方法 | 路径 | 请求 | 响应 |
 |---|---|---|---|
-| POST | `/login` | `{"username","password"}` | `{"token","player_id"}` |
+| POST | `/login` | `{"username","password"}` | `{"token","player_id"}`；401 账号或密码错，429 登录太频繁 |
 | POST/PUT | `/decks` | 头 `Authorization: Bearer <token>`，体 `{"cards":[...]}`，8–12 张，单卡 ≤2 | `{"ok":"true","owner"}` |
-| GET | `/ws?token=` | 升级为 WebSocket | — |
+| GET | `/ws?token=` | 升级为 WebSocket | 403 来源不允许，401 token 无效，503 token 存储不可用 |
 | GET | `/metrics` | — | 纯文本指标 |
 
 ### WebSocket：客户端 → 服务端
@@ -131,20 +149,25 @@ scripts/bot        对打机器人
 go test -race -count=3 ./...
 ```
 
-- `internal/match` 需要本地 Redis（`127.0.0.1:6379`，可用 `REDIS_ADDR` 覆盖，用的是 DB 15）。连不上时这些测试会跳过，不会失败。
+- `internal/match` 和 `internal/auth` 的 Redis 用例需要本地 Redis（`127.0.0.1:6379`，可用 `REDIS_ADDR` 覆盖，分别用 DB 15 和 DB 14）。连不上时这些用例会跳过，不会失败。
 - `scripts/bot` 里有进程内的端到端测试：真 WebSocket 加真房间，两个 bot 打完一整局，并核对战报。
 - 端到端（真库）：按"快速开始"起服务后跑 bot，再查战报：
   ```sql
   SELECT room_id, winner, end_reason, rounds, JSON_LENGTH(actions) FROM battle_reports;
   ```
+- 压测：服务端要关掉登录限速（所有 bot 来自同一个 IP），再跑 bot 的 `-load` 模式。先登录全部玩家，再按 `-ramp` 陆续开局，登录和对局分开统计：
+  ```bash
+  PET_LOGIN_RATE=0 docker compose up -d          # 在 deployments/ 下
+  go run ./scripts/bot -load -players 2000 -games 1 -ramp 10s
+  ```
 
 ## 已知限制
 
-- **单实例**：房间和 token 都在进程内存里，不能水平扩展，重启后进行中的对局会丢失（但会写一份 `aborted` 战报）。
-- **token**：没有过期，不持久化，重启后要重新登录。密码是明文存储、明文比较，仅用于演示。
+- **单实例**：房间在进程内存里，不能水平扩展，重启后进行中的对局会丢失（但会写一份 `aborted` 战报）。token 已经在 Redis 里，重启后不用重新登录。
+- **账号安全**：没有登出接口；登录限速只按 IP，没有按账号统计失败次数锁定；部署在反向代理后面时要改成信任代理加的 `X-Forwarded-For`。
 - **法术卡**（bolt、heal）在卡表里，但服务端没实现，出了会回 `not_implemented`。
 - **回放**：战报里已经有重放需要的全部数据，`battle.Replay` 还没写。
 - **inbox 两人共享**：限速挡住了单人刷指令，但 inbox 满时丢的可能是任何一方的指令。客户端要靠 `seq` 跳号发现丢失，再重新 `join`。
 - **客户端丢了 room_id**：服务端不会主动推 `resume`，需要客户端自己保存 `room_id`。
 - **日志**：用的是 `log.Printf`，没有结构化日志（slog）。
-- **CORS / Origin**：WebSocket 的 `CheckOrigin` 放行所有来源。
+- **token 在 URL 里**：浏览器 WebSocket 不能自定义请求头，token 只能放在 `?token=`，可能出现在代理的访问日志里。
