@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -79,6 +80,24 @@ func TestBotsPlayFullGame(t *testing.T) {
 		// 战报里的动作数 = 两个 bot 被房间接受的动作数（限速重发的那次只算一次）
 		if got, want := len(rep.Actions), rs[0].Actions+rs[1].Actions; got != want {
 			t.Fatalf("战报 %d 个动作，bot 发了 %d 个", got, want)
+		}
+		// 只靠战报重放整局：每一步都要被接受，终局要和房间里的一模一样
+		steps, err := room.Steps(rep.Actions)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := battle.Replay(cat, rep.RoomID,
+			battle.PlayerInit{ID: rep.Players[0], Cards: rep.InitDecks[0]},
+			battle.PlayerInit{ID: rep.Players[1], Cards: rep.InitDecks[1]},
+			rep.Seed, steps, nil)
+		if err != nil {
+			t.Fatalf("重放失败: %v", err)
+		}
+		if !reflect.DeepEqual(got.GodView(), st.GodView()) {
+			t.Fatalf("重放终局和房间不一致:\n房间 %+v\n重放 %+v", st.GodView(), got.GodView())
+		}
+		if got.Winner != rep.Winner || got.DisplayRound() != rep.Rounds {
+			t.Fatalf("重放 winner=%q rounds=%d，战报 %q %d", got.Winner, got.DisplayRound(), rep.Winner, rep.Rounds)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("没交战报")
