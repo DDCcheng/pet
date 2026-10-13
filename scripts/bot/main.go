@@ -2,6 +2,7 @@
 //
 //	go run ./scripts/bot -games 5
 //	go run ./scripts/bot -users bot1,bot2,bot3,bot4 -games 10   # 4 个 bot 同时排队
+//	go run ./scripts/bot -load -players 1000 -games 2           # 压测：自动建 load0..load999 账号
 package main
 
 import (
@@ -13,6 +14,7 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -59,7 +61,28 @@ func main() {
 	delay := flag.Duration("delay", 150*time.Millisecond, "每个动作前的停顿")
 	cards := flag.String("cards", "configs/cards.yaml", "卡表路径")
 	timeout := flag.Duration("timeout", 3*time.Minute, "单局超时")
+	load := flag.Bool("load", false, "压测模式")
+	players := flag.Int("players", 200, "压测：并发玩家数（偶数）")
+	prefix := flag.String("prefix", "load", "压测：账号前缀")
+	ramp := flag.Duration("ramp", 5*time.Second, "压测：在这段时间内均匀登录")
+	dsn := flag.String("dsn", "root:pet@tcp(127.0.0.1:3307)/pet", "压测：用来建账号的 MySQL，空串表示不建")
+	jsonOut := flag.String("json", "", "压测：结果另存为 JSON")
 	flag.Parse()
+
+	if *load {
+		rep, err := runLoad(loadConfig{
+			Addr: *addr, Players: *players, Prefix: *prefix, Pass: *pass, Games: *games,
+			Delay: *delay, Ramp: *ramp, Timeout: *timeout, DSN: *dsn, JSONOut: *jsonOut, CardPath: *cards,
+		})
+		if err != nil {
+			log.Fatal(err)
+		}
+		rep.print()
+		if rep.Failed > 0 {
+			os.Exit(1)
+		}
+		return
+	}
 
 	cat, err := deck.Load(*cards)
 	if err != nil {

@@ -15,6 +15,7 @@ type Manager struct {
 	BaseWindow  float64       // 初始分差窗口，±50
 	WidenPerSec float64       // 每等 1 秒放宽多少，20
 	MaxWindow   float64       // 上限，±500
+	Batch       int64         // 每轮从等待最久的一端取多少人来撮合，0 表示 20
 	OnMatch     func(p Pair)
 }
 
@@ -72,7 +73,11 @@ func (m *Manager) take(ctx context.Context, playerId string) (bool, error) {
 func (m *Manager) matchOnce(ctx context.Context) error {
 	now := float64(time.Now().UnixMilli())
 	paired := map[string]bool{}
-	zs, err := m.RDB.ZRangeWithScores(ctx, keyTime, 0, 19).Result()
+	batch := m.Batch
+	if batch <= 0 {
+		batch = 20
+	}
+	zs, err := m.RDB.ZRangeWithScores(ctx, keyTime, 0, batch-1).Result()
 	if err != nil {
 		return err
 	}

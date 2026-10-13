@@ -63,6 +63,7 @@ func newMatcher(rdb *redis.Client) *match.Manager {
 		BaseWindow:  50,
 		WidenPerSec: 20,
 		MaxWindow:   500,
+		Batch:       200, // 压测：20 时每秒最多约 80 人进局，2000 人排队 p99 等 20s
 	}
 }
 

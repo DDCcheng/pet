@@ -30,6 +30,11 @@ type client struct {
 	cat   *deck.Catalog
 	rng   *rand.Rand
 	delay time.Duration // 每个动作前等一下，像人一样；也别撞服务端的 10 条/秒限速
+
+	// 压测用的钩子，普通模式下为 nil
+	enqueuedAt func() time.Time        // 本局 enqueue 的时间
+	onMatch    func(wait time.Duration) // enqueue → match_found
+	onRTT      func(rtt time.Duration)  // 发出动作 → 收到下一份 game_state
 }
 
 // result 是一局的统计
@@ -61,6 +66,7 @@ func (c *client) playOne(ctx context.Context) (result, error) {
 	var res result
 	var last battle.Action
 	var lastSeq uint64
+	var sentAt time.Time // 非零表示有一个动作在等服务端回状态
 	for {
 		if dl, ok := ctx.Deadline(); ok {
 			c.conn.SetReadDeadline(dl)
@@ -72,10 +78,19 @@ func (c *client) playOne(ctx context.Context) (result, error) {
 		switch m.Type {
 		case "match_found":
 			res.RoomID = m.RoomID
+			if c.onMatch != nil && c.enqueuedAt != nil {
+				c.onMatch(time.Since(c.enqueuedAt()))
+			}
 			if err := c.send("join", map[string]string{"room_id": m.RoomID}); err != nil {
 				return res, err
 			}
 		case "game_state":
+			if !sentAt.IsZero() && m.Seq > lastSeq {
+				if c.onRTT != nil {
+					c.onRTT(time.Since(sentAt))
+				}
+				sentAt = time.Time{}
+			}
 			if m.Seq <= lastSeq || m.Over || !m.YourTurn {
 				lastSeq = max(lastSeq, m.Seq)
 				continue
@@ -84,6 +99,7 @@ func (c *client) playOne(ctx context.Context) (result, error) {
 			time.Sleep(c.delay)
 			last = chooseAction(m.View, c.cat, c.rng)
 			res.Actions++
+			sentAt = time.Now()
 			if err := c.sendAction(res.RoomID, last); err != nil {
 				return res, err
 			}
@@ -92,6 +108,7 @@ func (c *client) playOne(ctx context.Context) (result, error) {
 			case m.Payload == "rate_limited":
 				res.Limited++
 				time.Sleep(200 * time.Millisecond)
+				sentAt = time.Now() // 限速等待不算进 RTT
 				if err := c.sendAction(res.RoomID, last); err != nil {
 					return res, err
 				}
@@ -100,6 +117,7 @@ func (c *client) playOne(ctx context.Context) (result, error) {
 				res.Illegal++
 				log.Printf("%s: 动作 %+v 被拒: %s %s", c.name, last, m.Code, m.Msg)
 				last = battle.Action{Type: "end_turn"}
+				sentAt = time.Now()
 				if err := c.sendAction(res.RoomID, last); err != nil {
 					return res, err
 				}
