@@ -177,7 +177,7 @@ func run() error {
 	s := &auth.Server{
 		DB:     db,
 		Cat:    cat,
-		Tokens: map[string]string{},
+		Tokens: &auth.RedisTokens{RDB: rdb},
 		Conns:  map[string]*auth.WsClient{},
 	}
 	mm := newMatcher(rdb)

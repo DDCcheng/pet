@@ -16,7 +16,7 @@ import (
 // 真 WebSocket：alice 狂刷指令被限速，bob 的 join 照常进房间
 func TestFloodingPlayerLimitedOpponentUnaffected(t *testing.T) {
 	s := &Server{
-		Tokens:  map[string]string{"ta": "alice", "tb": "bob"},
+		Tokens:  NewMemTokens(time.Hour, map[string]string{"ta": "alice", "tb": "bob"}),
 		Conns:   map[string]*WsClient{},
 		RoomMgr: room.NewManager(),
 	}

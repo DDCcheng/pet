@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/DDCcheng/pet/internal/deck"
 	"github.com/DDCcheng/pet/internal/match"
@@ -29,7 +28,7 @@ type loginResp struct {
 
 type Server struct {
 	DB      *sql.DB
-	Tokens  map[string]string    //token->playerid
+	Tokens  TokenStore           //token->playerid，生产用 Redis，测试可用内存版
 	Conns   map[string]*WsClient //playerId->websocket
 	mu      sync.RWMutex
 	MM      *match.Manager
@@ -87,10 +86,12 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	token := fmt.Sprintf("%s-%d", req.Username, time.Now().UnixNano())
-	s.mu.Lock()
-	s.Tokens[token] = req.Username
-	s.mu.Unlock()
+	token, err := s.Tokens.Issue(r.Context(), req.Username)
+	if err != nil {
+		log.Printf("issue token for %s: %v", req.Username, err)
+		writeJSON(w, http.StatusServiceUnavailable, loginResp{Error: "token store unavailable"})
+		return
+	}
 	writeJSON(w, http.StatusOK, loginResp{Token: token, PlayerId: req.Username})
 }
 
@@ -98,16 +99,10 @@ func (s *Server) PlayerFromToken(r *http.Request) (string, error) {
 	h := r.Header.Get("Authorization")
 	const prefix = "Bearer "
 	if !strings.HasPrefix(h, prefix) {
-		return "", fmt.Errorf("missing token")
+		return "", fmt.Errorf("missing token: %w", ErrInvalidToken)
 	}
 	token := strings.TrimPrefix(h, prefix)
-	s.mu.RLock()
-	username, ok := s.Tokens[token]
-	s.mu.RUnlock()
-	if !ok {
-		return "", fmt.Errorf("invalid token")
-	}
-	return username, nil
+	return s.Tokens.Lookup(r.Context(), token)
 }
 
 func (s *Server) Savedecks(w http.ResponseWriter, r *http.Request) {
@@ -118,7 +113,8 @@ func (s *Server) Savedecks(w http.ResponseWriter, r *http.Request) {
 	}
 	username, err := s.PlayerFromToken(r)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, loginResp{Error: err.Error()})
+		code, msg := tokenErr(err)
+		writeJSON(w, code, loginResp{Error: msg})
 		return
 	}
 	//valid body

@@ -190,11 +190,10 @@ func (c *WsClient) writeLoop() {
 
 func (s *Server) ServerWs(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
-	s.mu.RLock()
-	username, ok := s.Tokens[token]
-	s.mu.RUnlock()
-	if !ok || token == "" {
-		http.Error(w, "invalid token", http.StatusUnauthorized)
+	username, err := s.Tokens.Lookup(r.Context(), token)
+	if err != nil {
+		code, msg := tokenErr(err)
+		http.Error(w, msg, code)
 		return
 	}
 	conn, err := upgrader.Upgrade(w, r, nil)

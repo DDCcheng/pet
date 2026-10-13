@@ -19,7 +19,7 @@ import (
 func TestBotsPlayFullGame(t *testing.T) {
 	cat := loadCat(t)
 	s := &auth.Server{
-		Tokens:  map[string]string{"ta": "bot1", "tb": "bot2"},
+		Tokens:  auth.NewMemTokens(time.Hour, map[string]string{"ta": "bot1", "tb": "bot2"}),
 		Conns:   map[string]*auth.WsClient{},
 		RoomMgr: room.NewManager(),
 		Cat:     cat,
