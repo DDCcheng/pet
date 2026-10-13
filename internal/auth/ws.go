@@ -88,6 +88,7 @@ func (s *Server) removeConn(user string, c *WsClient) bool {
 func mustJSON(v any) []byte { b, _ := json.Marshal(v); return b }
 
 func (c *WsClient) readLoop(username string) {
+	lim := newLimiter(cmdRate, cmdBurst)
 	c.conn.SetReadLimit(maxMsgSize)
 	c.conn.SetReadDeadline(time.Now().Add(pongWait))
 	c.conn.SetPongHandler(func(string) error {
@@ -122,6 +123,11 @@ func (c *WsClient) readLoop(username string) {
 			}
 			cancel()
 		case "join", "play_card", "end_turn", "attack":
+			if !lim.Allow() {
+				rateLimited.Add(1)
+				c.Send(mustJSON(wsMsg{Type: "error", Payload: "rate_limited"}))
+				break
+			}
 			var p struct {
 				RoomID string `json:"room_id"`
 			}

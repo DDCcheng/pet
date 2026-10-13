@@ -6,7 +6,9 @@ import "sync/atomic"
 var (
 	sendDropped atomic.Int64 // send 缓冲写满被丢掉的消息数
 	slowKicked  atomic.Int64 // 因为 send 写满被踢掉的连接数
+	rateLimited atomic.Int64 // 被 readLoop 限速拒掉的对局指令数
 )
 
 func SendDropped() int64 { return sendDropped.Load() }
 func SlowKicked() int64  { return slowKicked.Load() }
+func RateLimited() int64 { return rateLimited.Load() }

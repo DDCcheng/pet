@@ -61,6 +61,7 @@ func (r *Room) Send(c Cmd) bool {
 	case <-r.ctx.Done():
 		return false
 	default:
+		inboxDropped.Add(1) // inbox 满：两人共享，丢的可能是任何一方的指令
 		return false
 	}
 }
