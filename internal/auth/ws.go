@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/DDCcheng/pet/internal/room"
@@ -39,6 +40,7 @@ type WsClient struct {
 	quit   chan struct{}
 	once   sync.Once
 	roomId string
+	kicked atomic.Bool // 慢客户端只踢一次、只计一次
 }
 
 func (c *WsClient) close() {
@@ -52,6 +54,12 @@ func (c *WsClient) Send(b []byte) bool {
 	case <-c.quit:
 		return false
 	default:
+		// 写满说明对端读得太慢：丢掉这条并踢掉连接，房间协程和对手都不受影响
+		sendDropped.Add(1)
+		if c.kicked.CompareAndSwap(false, true) {
+			slowKicked.Add(1)
+			c.close()
+		}
 		return false
 	}
 }
