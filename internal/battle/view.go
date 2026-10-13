@@ -53,3 +53,23 @@ func toView(p *Player, showhand bool) PlayerView {
 	}
 	return *pv
 }
+
+// GodView 是回放用的上帝视角：双方手牌都可见。只在对局结束后的回放里用，对局中绝不能发给客户端。
+type GodView struct {
+	Players [2]PlayerView `json:"players"`
+	Turn    int           `json:"turn"`  // 当前该谁行动：0 或 1
+	Round   int           `json:"round"` // 单位是 ply（半回合）
+	Over    bool          `json:"over"`
+	Winner  string        `json:"winner"`
+}
+
+// GodView 返回当前局面的深拷贝（toView 会复制手牌和场面），之后状态再变也不影响已经取走的帧。
+func (s *State) GodView() GodView {
+	return GodView{
+		Players: [2]PlayerView{toView(s.Players[0], true), toView(s.Players[1], true)},
+		Turn:    s.Turn,
+		Round:   s.Round,
+		Over:    s.Over,
+		Winner:  s.Winner,
+	}
+}
