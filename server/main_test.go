@@ -107,3 +107,19 @@ func TestNewLoginLimiter(t *testing.T) {
 		t.Fatal("default / bad value should keep the limiter on")
 	}
 }
+
+// seed 必须不可预测：和当前时间无关，连续生成也不重复。
+func TestNewSeedIsNotTime(t *testing.T) {
+	seen := map[int64]bool{}
+	for i := 0; i < 1000; i++ {
+		now := time.Now().UnixNano()
+		s := newSeed()
+		if d := s - now; d > -int64(time.Second) && d < int64(time.Second) {
+			t.Fatalf("seed %d 离当前时间只有 %v，像是时间戳", s, time.Duration(d))
+		}
+		if seen[s] {
+			t.Fatalf("seed 重复：%d", s)
+		}
+		seen[s] = true
+	}
+}

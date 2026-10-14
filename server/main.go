@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	crand "crypto/rand"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -215,7 +217,7 @@ func run() error {
 		deckA := loadDeckOrDefault(db, cat, p.A)
 		deckB := loadDeckOrDefault(db, cat, p.B)
 		// 2. 建对局状态。seed 打日志：出了问题可以用同一个 seed 复盘整局
-		seed := time.Now().UnixNano()
+		seed := newSeed()
 		st, err := battle.NewState(p.RoomID, cat,
 			battle.PlayerInit{ID: p.A, Cards: deckA},
 			battle.PlayerInit{ID: p.B, Cards: deckB},
@@ -252,6 +254,16 @@ func run() error {
 	rooms.Wait() // 等所有房间写完战报，再让 defer 关 DB
 	log.Println("bye")
 	return nil
+}
+
+// newSeed 用 crypto/rand 生成对局种子，洗牌仍然交给 battle 里确定性的 math/rand，所以照样能回放。
+// 不能用 time.Now().UnixNano()：房间 ID 末尾就是匹配时的纳秒时间戳，会随 match_found 发给客户端，
+// 和取 seed 的时刻只差几毫秒（实测 p99 3.2ms）。客户端在这个范围里枚举 seed、拿自己的起手牌比对，
+// 几秒就能锁定，然后双方牌库顺序全部可知。
+func newSeed() int64 {
+	var b [8]byte
+	crand.Read(b[:]) // Go 1.24 起不会返回错误，系统随机源坏了会直接崩
+	return int64(binary.LittleEndian.Uint64(b[:]))
 }
 
 func main() {
