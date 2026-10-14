@@ -23,6 +23,13 @@ func newSession(players [2]string) *session {
 	}
 }
 
+// notifyCrash 告诉双方房间出错关掉了，客户端不用再等。
+// 它在 recover 之后调用，而 panic 可能正是 Out 引起的，所以这里自己再兜一层，不能让二次 panic 把进程带崩。
+func (r *Room) notifyCrash() {
+	defer func() { _ = recover() }()
+	r.broadcast(map[string]string{"type": "error", "payload": "room_crashed", "room_id": r.Id})
+}
+
 func (r *Room) broadcast(v any) {
 	if r.Out == nil {
 		return

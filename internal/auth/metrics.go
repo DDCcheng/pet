@@ -33,6 +33,7 @@ func (s *Server) Metrics(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "pet_rooms_active %d\n", rooms)
 	fmt.Fprintf(w, "pet_ws_conns %d\n", conns)
 	fmt.Fprintf(w, "pet_inbox_dropped_total %d\n", room.InboxDropped())
+	fmt.Fprintf(w, "pet_room_panics_total %d\n", room.RoomPanics())
 	fmt.Fprintf(w, "pet_send_dropped_total %d\n", SendDropped())
 	fmt.Fprintf(w, "pet_slow_kicked_total %d\n", SlowKicked())
 	fmt.Fprintf(w, "pet_rate_limited_total %d\n", RateLimited())

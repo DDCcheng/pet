@@ -49,7 +49,7 @@ func TestMetricsEndpoint(t *testing.T) {
 	}
 	m := parseMetrics(t, rec.Body.String())
 	for _, k := range []string{"pet_rooms_active", "pet_ws_conns", "pet_inbox_dropped_total",
-		"pet_send_dropped_total", "pet_slow_kicked_total", "pet_rate_limited_total"} {
+		"pet_send_dropped_total", "pet_slow_kicked_total", "pet_rate_limited_total", "pet_room_panics_total"} {
 		if _, ok := m[k]; !ok {
 			t.Fatalf("缺指标 %s\n%s", k, rec.Body.String())
 		}

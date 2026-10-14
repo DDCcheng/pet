@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"runtime/debug"
 	"time"
 
 	"github.com/DDCcheng/pet/internal/battle"
@@ -176,6 +177,17 @@ func (r *Room) Run(parent context.Context) {
 		}
 		r.Close()
 		log.Printf("room %s closed", r.Id)
+	}()
+	// 房间粒度的故障隔离：规则代码或回调 panic 时只关这一个房间，不带崩整个进程。
+	// 这个 defer 注册在上面那个之后，所以先执行：recover 掉 panic、把 reason 改成 crashed，
+	// 上面的 defer 再照常写战报、停计时器、关房间。
+	defer func() {
+		if p := recover(); p != nil {
+			roomPanics.Add(1)
+			reason = "crashed"
+			log.Printf("room %s: panic: %v\n%s", r.Id, p, debug.Stack())
+			r.notifyCrash()
+		}
 	}()
 	lastTurn := -1
 	checkTurn := func() {

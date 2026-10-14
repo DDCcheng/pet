@@ -11,7 +11,7 @@ Go 写的权威 1v1 宠物卡牌对局服：登录、组卡、Redis 匹配、房
 ```bash
 cd deployments
 docker compose up -d --build      # mysql + redis + server，首次会建表并写入测试账号
-curl localhost:8080/metrics       # 看到 6 行 pet_* 指标就说明起来了
+curl localhost:8080/metrics       # 看到 7 行 pet_* 指标就说明起来了
 
 cd ..
 go run ./scripts/bot -games 5                          # bot1 vs bot2 打 5 局
@@ -76,6 +76,7 @@ A ─WS→ readLoop(A) ─inbox(64)→ room goroutine ─sendA(256)→ writeLoop
 | WebSocket Origin | 不带 Origin（bot / App）放行；否则只允许同源或 `PET_ALLOWED_ORIGINS` 里精确匹配的来源 |
 | 登录限速 | 按 TCP 对端 IP 的令牌桶，在查库和 bcrypt 之前拒绝，回 429 + `Retry-After` |
 | 请求体 | HTTP 64KB，WebSocket 32KB |
+| 对局种子 | `crypto/rand` 生成 64 位 seed，洗牌交给确定性的 `math/rand`（回放靠它）。不用纳秒时间：房间 ID 里带着匹配时的时间戳，和 seed 只差几毫秒，客户端能枚举出 seed、推出双方牌库顺序 |
 
 ### 断线重连
 
@@ -86,7 +87,8 @@ A ─WS→ readLoop(A) ─inbox(64)→ room goroutine ─sendA(256)→ writeLoop
 ### 战报与关服顺序
 
 - **战报 = seed + 有序动作日志 + 双方初始卡组 + 卡表 sha256**。battle 是确定性的，拿同一个 seed 重放动作就能还原整局，不用存每一步的快照。
-- `end_reason` 有三种：`finished`（分出胜负）、`abandoned`（两人掉线超时）、`aborted`（关服或房间被关）。没开局就散了的房间不写战报。
+- `end_reason` 有四种：`finished`（分出胜负）、`abandoned`（两人掉线超时）、`aborted`（关服或房间被关）、`crashed`（房间 goroutine panic）。没开局就散了的房间不写战报。
+- **房间粒度的故障隔离**：房间 goroutine 里 recover 掉 panic，只关这一个房间：写 `crashed` 战报（panic 前已接受的动作都在，照样能回放），给双方发 `room_crashed`，`pet_room_panics_total` +1，堆栈打日志。其他房间和整个进程不受影响。
 - 落库用 `context.Background()` 派生的新 ctx。关服时房间 ctx 和 signal ctx 都已经取消，如果沿用它们，战报会写不进去。
 - 关服顺序：`srv.Shutdown` → `rooms.Wait()`（等所有房间写完战报）→ `defer db.Close()`。
 
@@ -151,7 +153,7 @@ scripts/replay     战报重放与批量校验
 | `state` | `status`：`waiting` / `ready` |
 | `game_state` | `seq`、`me`（含手牌）、`opp`（只有手牌数）、`your_turn`、`round`、`over`、`winner` |
 | `game_over` | `winner` |
-| `error`（连接层） | `payload`：`rate_limited` / `room_not_found` / `not_in_room` / `room_busy_or_closed` / `bad json` / `enqueue failed` |
+| `error`（连接层） | `payload`：`rate_limited` / `room_not_found` / `not_in_room` / `room_crashed` / `room_busy_or_closed` / `bad json` / `enqueue failed` |
 | `error`（规则层） | `code` + `msg`，例如 `not_your_turn`、`not_enough_mana` |
 
 ### 规则摘要
